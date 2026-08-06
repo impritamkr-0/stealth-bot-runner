@@ -7,13 +7,35 @@ import random
 import tempfile
 import shutil
 import urllib.request
-import pyautogui
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Helper function to generate real temp mail via mail.tm
+# -------------------------------------------------------------
+# Helper: Download NopeCHA CRX Package
+# -------------------------------------------------------------
+def download_nopecha_crx(target_path):
+    print("[1/8] Downloading NopeCHA CRX package directly...")
+    crx_url = "https://clients2.google.com/service/update2/crx?response=redirect&os=linux&arch=x64&os_arch=x86_64&nacl_arch=x86-64&prod=chromecrx&prodversion=120.0&acceptformat=crx3&x=id%3Ddknlfmjaanfblgfdfebhijalfmhmjjjo%26uc"
+    req = urllib.request.Request(crx_url, headers={'User-Agent': 'Mozilla/5.0'})
+    with urllib.request.urlopen(req) as resp, open(target_path, 'wb') as out_file:
+        out_file.write(resp.read())
+    print("      CRX package downloaded successfully.")
+
+# Helper: Set Angular Input and Dispatch Events
+def set_angular_input(driver, element, value):
+    element.clear()
+    for char in value:
+        element.send_keys(char)
+        time.sleep(0.03)
+    driver.execute_script("""
+        arguments[0].dispatchEvent(new Event('input', { bubbles: true }));
+        arguments[0].dispatchEvent(new Event('change', { bubbles: true }));
+        arguments[0].dispatchEvent(new Event('blur', { bubbles: true }));
+    """, element)
+
+# Helper: Generate Real Temp Email
 def create_real_temp_email():
     print("      [mail.tm] Querying active domain...")
     req = urllib.request.Request("https://api.mail.tm/domains", headers={'User-Agent': 'Mozilla/5.0'})
@@ -23,9 +45,8 @@ def create_real_temp_email():
     active_domain = domains_data['hydra:member'][0]['domain']
     unique_user = f"user_{uuid.uuid4().hex[:8]}"
     email_address = f"{unique_user}@{active_domain}"
-    account_password = "TempMailPassword123!"
 
-    payload = json.dumps({"address": email_address, "password": account_password}).encode('utf-8')
+    payload = json.dumps({"address": email_address, "password": "TempMailPassword123!"}).encode('utf-8')
     post_req = urllib.request.Request(
         "https://api.mail.tm/accounts",
         data=payload,
@@ -34,9 +55,6 @@ def create_real_temp_email():
     with urllib.request.urlopen(post_req) as response:
         print(f"      [mail.tm] Account created: {email_address}")
         return email_address
-
-def human_delay(min_sec=2.0, max_sec=4.0):
-    time.sleep(random.uniform(min_sec, max_sec))
 
 def generate_strong_password(length=16):
     lowercase = string.ascii_lowercase
@@ -52,41 +70,34 @@ def generate_strong_password(length=16):
     random.shuffle(password)
     return "".join(password)
 
-# -------------------------------------------------------------
-# Temporary Profile Setup
-# -------------------------------------------------------------
-temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
-options = uc.ChromeOptions()
-options.add_argument(f"--user-data-dir={temp_profile_dir}")
+def human_delay(min_sec=2.0, max_sec=4.0):
+    time.sleep(random.uniform(min_sec, max_sec))
 
-driver = uc.Chrome(options=options, version_main=150)
+# -------------------------------------------------------------
+# Execution Workflow
+# -------------------------------------------------------------
+temp_dir = tempfile.mkdtemp(prefix="stealth_bot_")
+crx_file = os.path.join(temp_dir, "nopecha.crx")
+profile_dir = os.path.join(temp_dir, "chrome_profile")
 
 try:
-    # Step 1: Install NopeCHA Extension
-    print("[1/8] Installing NopeCHA Extension...")
-    driver.get("https://chromewebstore.google.com/detail/nopecha-captcha-solver/dknlfmjaanfblgfdfebhijalfmhmjjjo?hl=en")
-    human_delay(2, 3)
-    
-    add_button = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Add to Chrome') or contains(., 'Add to')]"))
-    )
-    add_button.click()
-    time.sleep(2)
-    pyautogui.press('left')
-    time.sleep(0.5)
-    pyautogui.press('enter')
-    time.sleep(0.5)
-    pyautogui.press('enter')
-    human_delay(4, 5)
+    # Download CRX
+    download_nopecha_crx(crx_file)
 
-    # Step 2: Open New Tab & Navigate to EuroDNS
-    print("[2/8] Opening new tab and navigating to EuroDNS...")
-    driver.switch_to.new_window('tab')
+    options = uc.ChromeOptions()
+    options.add_argument(f"--user-data-dir={profile_dir}")
+    options.add_extension(crx_file)  # Pre-loads NopeCHA natively
+
+    print("[2/8] Launching Chrome with NopeCHA pre-loaded...")
+    driver = uc.Chrome(options=options, version_main=150)
+
+    # Step 3: Navigate to EuroDNS
+    print("[3/8] Navigating to EuroDNS registration page...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
     human_delay(3, 5)
 
-    # Step 3: Accept Cookies
-    print("[3/8] Accepting cookie consent...")
+    # Step 4: Accept Cookies
+    print("[4/8] Accepting cookies...")
     try:
         accept_cookies = WebDriverWait(driver, 8).until(
             EC.element_to_be_clickable((By.XPATH, '//*[@id="cookiescript_accept"]'))
@@ -97,8 +108,8 @@ try:
         print(f"      Cookie banner note: {e}")
     human_delay(2, 3)
 
-    # Step 4: Open Account Menu & Click 'New Account'
-    print("[4/8] Opening Account menu & clicking 'New Account'...")
+    # Step 5: Navigate to 'New Account'
+    print("[5/8] Opening Account menu & clicking 'New Account'...")
     account_btn = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, '//*[@id="account-item-logout"]'))
     )
@@ -111,8 +122,8 @@ try:
     driver.execute_script("arguments[0].click();", new_account_btn)
     human_delay(4, 5)
 
-    # Step 5: Fill Credentials
-    print("[5/8] Generating real email & password...")
+    # Step 6: Fill Credentials with Angular Event Dispatch
+    print("[6/8] Generating real email & password...")
     real_email = create_real_temp_email()
     eurodns_pass = generate_strong_password(16)
 
@@ -125,38 +136,31 @@ try:
     email_field = WebDriverWait(driver, 15).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[formcontrolname='email'], input[name='email']"))
     )
-    email_field.clear()
-    for char in real_email:
-        email_field.send_keys(char)
-        time.sleep(0.05)
-
+    set_angular_input(driver, email_field, real_email)
     human_delay(1, 2)
 
     password_field = WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'], input[formcontrolname='password']"))
     )
-    password_field.clear()
-    for char in eurodns_pass:
-        password_field.send_keys(char)
-        time.sleep(0.05)
-
+    set_angular_input(driver, password_field, eurodns_pass)
     human_delay(2, 3)
 
-    # Step 6: Newsletter Checkbox
-    print("[6/8] Clicking newsletter checkbox...")
+    # Step 7: Checkbox
+    print("[7/8] Clicking newsletter checkbox...")
     try:
         checkbox = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.XPATH, '//*[@id="subscribe-newsletter-checkbox-input"]'))
         )
         driver.execute_script("arguments[0].scrollIntoView(true);", checkbox)
         driver.execute_script("arguments[0].click();", checkbox)
+        driver.execute_script("arguments[0].dispatchEvent(new Event('change', { bubbles: true }));", checkbox)
     except Exception as e:
         print(f"      Checkbox note: {e}")
 
     human_delay(2, 3)
 
-    # Step 7: Click 'Create Account' FIRST to trigger CAPTCHA
-    print("[7/8] Clicking 'Create Account' button to trigger CAPTCHA popup...")
+    # Step 8: Click 'Create Account' to Trigger CAPTCHA
+    print("[8/8] Clicking 'Create Account' button to trigger CAPTCHA modal...")
     create_account_xpath = "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]"
     
     try:
@@ -171,19 +175,24 @@ try:
         )
         driver.execute_script("arguments[0].click();", create_btn)
 
-    print("      Button clicked! CAPTCHA modal popped up.")
-
-    # Step 8: Wait 60 seconds while NopeCHA solves CAPTCHA & auto-verifies
-    print("\n[8/8] Waiting 60 seconds for NopeCHA to solve CAPTCHA and auto-verify...")
+    print("      Button clicked! Waiting 60s for NopeCHA auto-solve...")
     time.sleep(60)
 
+    # Capture final state screenshot
+    driver.save_screenshot("screenshot.png")
+    print("      Saved 'screenshot.png' for run verification.")
+
     print("\n==================================================")
-    print("SUCCESS! CAPTCHA solved and account created.")
+    print("Form submitted post-CAPTCHA solve.")
     print(f"Credentials -> Email: {real_email} | Password: {eurodns_pass}")
     print("==================================================\n")
 
 except Exception as e:
     print(f"\n[X] Error during execution: {e}")
+    try:
+        driver.save_screenshot("screenshot.png")
+    except Exception:
+        pass
 
 finally:
     try:
@@ -192,7 +201,6 @@ finally:
     except Exception:
         pass
     try:
-        shutil.rmtree(temp_profile_dir, ignore_errors=True)
-        print("Temporary profile folder cleaned up.")
+        shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception:
         pass
