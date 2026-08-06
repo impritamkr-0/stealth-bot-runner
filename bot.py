@@ -65,7 +65,6 @@ def human_delay(min_sec=2.0, max_sec=4.0):
 # -------------------------------------------------------------
 # Main Execution Workflow
 # -------------------------------------------------------------
-# Path to uploaded extension in your repository
 ext_path = os.path.abspath("nopecha-chromium")
 manifest_path = os.path.join(ext_path, "manifest.json")
 
@@ -86,20 +85,19 @@ try:
     options.add_argument(f"--load-extension={ext_path}")
     options.add_argument(f"--disable-extensions-except={ext_path}")
 
-    print("[1/6] Launching Chrome with unpacked NopeCHA pre-loaded...")
+    print("[1/7] Launching Chrome with unpacked NopeCHA pre-loaded...")
     driver = uc.Chrome(options=options, version_main=150)
 
-    # Wait 5 seconds to let NopeCHA auto-initialize its free session
     print("      Waiting 5s for NopeCHA free session setup...")
     time.sleep(5)
 
     # Step 2: Navigate to EuroDNS
-    print("[2/6] Navigating to EuroDNS registration page...")
+    print("[2/7] Navigating to EuroDNS registration page...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
     human_delay(3, 5)
 
     # Step 3: Accept Cookies
-    print("[3/6] Accepting cookies...")
+    print("[3/7] Accepting cookies...")
     try:
         accept_cookies = WebDriverWait(driver, 8).until(
             EC.element_to_be_clickable((By.XPATH, '//*[@id="cookiescript_accept"]'))
@@ -111,7 +109,7 @@ try:
     human_delay(2, 3)
 
     # Step 4: Open Registration Form
-    print("[4/6] Opening Account menu & clicking 'New Account'...")
+    print("[4/7] Opening Account menu & clicking 'New Account'...")
     account_btn = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, '//*[@id="account-item-logout"]'))
     )
@@ -125,7 +123,7 @@ try:
     human_delay(4, 5)
 
     # Step 5: Fill Credentials
-    print("[5/6] Generating real temp email & password...")
+    print("[5/7] Generating real temp email & password...")
     real_email = create_real_temp_email()
     eurodns_pass = generate_strong_password(16)
 
@@ -162,7 +160,7 @@ try:
     human_delay(2, 3)
 
     # Step 6: Click Create Account
-    print("[6/6] Clicking 'Create Account' button to trigger CAPTCHA...")
+    print("[6/7] Clicking 'Create Account' button to trigger CAPTCHA...")
     create_account_xpath = "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]"
     
     try:
@@ -180,12 +178,22 @@ try:
     print("      Button clicked! Waiting 60 seconds for NopeCHA to solve image CAPTCHA...")
     time.sleep(60)
 
-    # Save screenshot artifact
+    # Step 7: Redirect to Account Summary Page to verify active login session
+    account_summary_url = "https://my.eurodns.com/account-summary"
+    print(f"[7/7] Navigating to account summary: {account_summary_url}")
+    driver.get(account_summary_url)
+    time.sleep(10)
+
+    current_url = driver.current_url
+    print(f"      Landed URL: {current_url}")
+
+    # Save screenshot artifact of the account summary page
     driver.save_screenshot("screenshot.png")
-    print("      Saved 'screenshot.png' for run verification.")
+    print("      Saved 'screenshot.png' of account summary page.")
 
     print("\n==================================================")
-    print("Form submitted post-CAPTCHA solve.")
+    print("Workflow finished.")
+    print(f"Final Page URL: {current_url}")
     print(f"Credentials -> Email: {real_email} | Password: {eurodns_pass}")
     print("==================================================\n")
 
