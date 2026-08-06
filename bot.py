@@ -2,8 +2,6 @@ import os
 import time
 import uuid
 import json
-import io
-import zipfile
 import string
 import random
 import tempfile
@@ -13,35 +11,6 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-
-# -------------------------------------------------------------
-# Permanent Fix: Download & Unpack NopeCHA Extension
-# -------------------------------------------------------------
-def get_unpacked_nopecha(target_dir):
-    """Downloads official NopeCHA release zip and extracts unpacked extension."""
-    abs_dir = os.path.abspath(target_dir)
-    manifest_path = os.path.join(abs_dir, "manifest.json")
-
-    if os.path.exists(manifest_path):
-        print(f"[Extension] Found existing NopeCHA folder at: {abs_dir}")
-        return abs_dir
-
-    print("[Extension] Downloading NopeCHA source zip from official repository...")
-    zip_url = "https://github.com/NopeCHA/NopeCHA/releases/latest/download/chrome.zip"
-    
-    req = urllib.request.Request(zip_url, headers={'User-Agent': 'Mozilla/5.0'})
-    try:
-        with urllib.request.urlopen(req) as resp:
-            zip_bytes = resp.read()
-
-        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-            z.extractall(abs_dir)
-
-        print(f"[Extension] Successfully unpacked extension to: {abs_dir}")
-        return abs_dir
-    except Exception as e:
-        print(f"[Extension] Download error: {e}")
-        raise e
 
 # Helper: Set Angular Input and Dispatch Events
 def set_angular_input(driver, element, value):
@@ -96,29 +65,40 @@ def human_delay(min_sec=2.0, max_sec=4.0):
 # -------------------------------------------------------------
 # Main Execution Workflow
 # -------------------------------------------------------------
+# Path to uploaded extension in your repository
+ext_path = os.path.abspath("nopecha-chromium")
+manifest_path = os.path.join(ext_path, "manifest.json")
+
+if not os.path.exists(manifest_path):
+    raise FileNotFoundError(
+        f"Could not find 'nopecha-chromium' folder at {ext_path}. "
+        "Please ensure the 'nopecha-chromium' folder is committed to your GitHub repository!"
+    )
+
+print(f"[Extension] Found local NopeCHA extension folder at: {ext_path}")
+
 temp_dir = tempfile.mkdtemp(prefix="stealth_bot_")
-ext_folder = os.path.join(temp_dir, "nopecha_ext")
 profile_dir = os.path.join(temp_dir, "chrome_profile")
 
 try:
-    # 1. Download & extract unpacked NopeCHA extension
-    ext_path = get_unpacked_nopecha(ext_folder)
-
-    # 2. Configure Chrome with unpacked extension
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={profile_dir}")
     options.add_argument(f"--load-extension={ext_path}")
     options.add_argument(f"--disable-extensions-except={ext_path}")
 
-    print("[1/6] Launching Chrome with NopeCHA pre-loaded...")
+    print("[1/6] Launching Chrome with unpacked NopeCHA pre-loaded...")
     driver = uc.Chrome(options=options, version_main=150)
 
-    # 3. Navigate to EuroDNS
+    # Wait 5 seconds to let NopeCHA auto-initialize its free session
+    print("      Waiting 5s for NopeCHA free session setup...")
+    time.sleep(5)
+
+    # Step 2: Navigate to EuroDNS
     print("[2/6] Navigating to EuroDNS registration page...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
     human_delay(3, 5)
 
-    # 4. Accept Cookies
+    # Step 3: Accept Cookies
     print("[3/6] Accepting cookies...")
     try:
         accept_cookies = WebDriverWait(driver, 8).until(
@@ -130,7 +110,7 @@ try:
         print(f"      Cookie banner note: {e}")
     human_delay(2, 3)
 
-    # 5. Open Registration Form
+    # Step 4: Open Registration Form
     print("[4/6] Opening Account menu & clicking 'New Account'...")
     account_btn = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, '//*[@id="account-item-logout"]'))
@@ -144,7 +124,7 @@ try:
     driver.execute_script("arguments[0].click();", new_account_btn)
     human_delay(4, 5)
 
-    # 6. Fill Credentials
+    # Step 5: Fill Credentials
     print("[5/6] Generating real temp email & password...")
     real_email = create_real_temp_email()
     eurodns_pass = generate_strong_password(16)
@@ -167,7 +147,7 @@ try:
     set_angular_input(driver, password_field, eurodns_pass)
     human_delay(2, 3)
 
-    # Checkbox
+    # Newsletter Checkbox
     print("      Clicking newsletter checkbox...")
     try:
         checkbox = WebDriverWait(driver, 10).until(
@@ -181,7 +161,7 @@ try:
 
     human_delay(2, 3)
 
-    # 7. Click Create Account
+    # Step 6: Click Create Account
     print("[6/6] Clicking 'Create Account' button to trigger CAPTCHA...")
     create_account_xpath = "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]"
     
