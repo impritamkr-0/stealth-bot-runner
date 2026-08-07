@@ -85,19 +85,42 @@ try:
     options.add_argument(f"--load-extension={ext_path}")
     options.add_argument(f"--disable-extensions-except={ext_path}")
 
-    print("[1/7] Launching Chrome with unpacked NopeCHA pre-loaded...")
+    print("[1/8] Launching Chrome with unpacked NopeCHA pre-loaded...")
     driver = uc.Chrome(options=options, version_main=150)
 
-    print("      Waiting 5s for NopeCHA free session setup...")
-    time.sleep(5)
+    # ---------------------------------------------------------
+    # WAKE UP & INITIALIZE NOPECHA SERVICE WORKER
+    # ---------------------------------------------------------
+    print("      Locating NopeCHA Extension ID via CDP...")
+    time.sleep(2)
+    ext_id = None
+    try:
+        targets = driver.execute_cdp_cmd('Target.getTargets', {})
+        for target in targets.get('targetInfos', []):
+            url = target.get('url', '')
+            if 'chrome-extension://' in url:
+                ext_id = url.split('/')[2]
+                break
+    except Exception as e:
+        print(f"      CDP target lookup note: {e}")
+
+    if ext_id:
+        print(f"      Found NopeCHA Extension ID: {ext_id}")
+        options_url = f"chrome-extension://{ext_id}/options.html"
+        print(f"      Opening options page to initialize session: {options_url}")
+        driver.get(options_url)
+        time.sleep(3)
+    else:
+        print("      Could not locate Extension ID directly; proceeding with 5s pause...")
+        time.sleep(5)
 
     # Step 2: Navigate to EuroDNS
-    print("[2/7] Navigating to EuroDNS registration page...")
+    print("[2/8] Navigating to EuroDNS registration page...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
     human_delay(3, 5)
 
     # Step 3: Accept Cookies
-    print("[3/7] Accepting cookies...")
+    print("[3/8] Accepting cookies...")
     try:
         accept_cookies = WebDriverWait(driver, 8).until(
             EC.element_to_be_clickable((By.XPATH, '//*[@id="cookiescript_accept"]'))
@@ -109,7 +132,7 @@ try:
     human_delay(2, 3)
 
     # Step 4: Open Registration Form
-    print("[4/7] Opening Account menu & clicking 'New Account'...")
+    print("[4/8] Opening Account menu & clicking 'New Account'...")
     account_btn = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, '//*[@id="account-item-logout"]'))
     )
@@ -123,7 +146,7 @@ try:
     human_delay(4, 5)
 
     # Step 5: Fill Credentials
-    print("[5/7] Generating real temp email & password...")
+    print("[5/8] Generating real temp email & password...")
     real_email = create_real_temp_email()
     eurodns_pass = generate_strong_password(16)
 
@@ -159,8 +182,10 @@ try:
 
     human_delay(2, 3)
 
+    driver.save_screenshot("screenshot_before_submit.png")
+
     # Step 6: Click Create Account
-    print("[6/7] Clicking 'Create Account' button to trigger CAPTCHA...")
+    print("[6/8] Clicking 'Create Account' button to trigger CAPTCHA...")
     create_account_xpath = "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]"
     
     try:
@@ -175,21 +200,47 @@ try:
         )
         driver.execute_script("arguments[0].click();", create_btn)
 
-    print("      Button clicked! Waiting 60 seconds for NopeCHA to solve image CAPTCHA...")
-    time.sleep(60)
+    print("      Button clicked! Monitoring CAPTCHA solving progress...")
+    
+    # ---------------------------------------------------------
+    # SMART CAPTCHA MONITORING LOOP
+    # ---------------------------------------------------------
+    captcha_solved = False
+    for i in range(12):  # Check every 5 seconds for up to 60 seconds
+        time.sleep(5)
+        print(f"      [Check {i+1}/12] Checking CAPTCHA status...")
+        
+        token_found = driver.execute_script("""
+            let el = document.querySelector('[name="g-recaptcha-response"], [name="h-captcha-response"], textarea[id*="g-recaptcha"]');
+            return el ? el.value.length > 10 : false;
+        """)
+        
+        if token_found:
+            print("      🎉 CAPTCHA Token populated by NopeCHA!")
+            captcha_solved = True
+            break
 
-    # Step 7: Redirect to Account Summary Page to verify active login session
+    driver.save_screenshot("screenshot_captcha_phase.png")
+
+    if captcha_solved:
+        print("      Submitting form with solved CAPTCHA token...")
+        try:
+            driver.execute_script("arguments[0].click();", create_btn)
+        except Exception:
+            pass
+        time.sleep(10)
+
+    # Step 7: Redirect to Account Summary Page
     account_summary_url = "https://my.eurodns.com/account-summary"
-    print(f"[7/7] Navigating to account summary: {account_summary_url}")
+    print(f"[7/8] Navigating to account summary: {account_summary_url}")
     driver.get(account_summary_url)
     time.sleep(10)
 
     current_url = driver.current_url
     print(f"      Landed URL: {current_url}")
 
-    # Save screenshot artifact of the account summary page
     driver.save_screenshot("screenshot.png")
-    print("      Saved 'screenshot.png' of account summary page.")
+    print("      Saved 'screenshot.png' of final summary landing page.")
 
     print("\n==================================================")
     print("Workflow finished.")
