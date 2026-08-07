@@ -1,156 +1,143 @@
 import os
-import sys
 import time
 import uuid
 import string
 import random
-import shutil
+import requests
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-SCREENSHOT_DIR = "."
+CAPSOLVER_API_KEY = "CAP-44CA8BA7E128FA814CCA3A5CB0517F65A1C36336E067E149BC7BBA84301F649E"  # <-- PUT YOUR KEY HERE
 
-def human_delay(min_sec=3.0, max_sec=7.0):
-    delay = random.uniform(min_sec, max_sec)
-    print(f"      [Delay] {delay:.2f}s...")
-    time.sleep(delay)
+def solve_captcha_capsolver(site_key, page_url):
+    """Use Capsolver to solve reCAPTCHA/hCaptcha"""
+    print("      [Capsolver] Sending captcha for solving...")
+    
+    payload = {
+        "clientKey": CAPSOLVER_API_KEY,
+        "task": {
+            "type": "ReCaptchaV2TaskProxyLess",
+            "websiteKey": site_key,
+            "websiteURL": page_url
+        }
+    }
+    
+    # Create task
+    response = requests.post("https://api.capsolver.com/createTask", json=payload)
+    result = response.json()
+    
+    if result.get("errorId") != 0:
+        print(f"      [Capsolver] Error: {result}")
+        return None
+    
+    task_id = result["taskId"]
+    print(f"      [Capsolver] Task created: {task_id}")
+    
+    # Wait for solution
+    for _ in range(30):  # Wait up to 60 seconds
+        time.sleep(2)
+        check = requests.post("https://api.capsolver.com/getTaskResult", 
+                            json={"clientKey": CAPSOLVER_API_KEY, "taskId": task_id})
+        check_result = check.json()
+        
+        if check_result.get("status") == "ready":
+            token = check_result["solution"]["gRecaptchaResponse"]
+            print("      [Capsolver] Solved!")
+            return token
+        
+        if check_result.get("status") == "failed":
+            print(f"      [Capsolver] Failed: {check_result}")
+            return None
+    
+    return None
 
-def generate_strong_password(length=16):
-    chars = string.ascii_letters + string.digits + "!@#$%^&*"
-    return "".join(random.choice(chars) for _ in range(length))
+def inject_captcha_token(driver, token):
+    """Inject the solved token into the page"""
+    script = f"""
+    document.getElementById('g-recaptcha-response').innerHTML='{token}';
+    if(typeof grecaptcha !== 'undefined') {{
+        grecaptcha.getResponse = function() {{ return '{token}'; }};
+    }}
+    """
+    driver.execute_script(script)
+    print("      [Inject] Token injected")
 
-def create_temp_email():
-    return f"user{uuid.uuid4().hex[:10]}@gmail.com"
-
-def take_screenshot(driver, name):
-    try:
-        driver.save_screenshot(f"{SCREENSHOT_DIR}/{name}.png")
-        print(f"      [Screenshot] {name}.png")
-    except:
-        pass
-
-# Setup
+# Main bot code
 profile_dir = "/tmp/chrome_profile_eurodns"
 os.makedirs(profile_dir, exist_ok=True)
-print(f"[Setup] Profile: {profile_dir}")
 
 options = uc.ChromeOptions()
-
-# Stealth flags
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--disable-blink-features=AutomationControlled")
-options.add_argument("--disable-web-security")
-options.add_argument("--disable-features=IsolateOrigins,site-per-process")
-options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 options.add_argument(f"--user-data-dir={profile_dir}")
-options.add_argument("--window-size=1920,1080")
 
-driver = None
+driver = uc.Chrome(options=options, use_subprocess=True)
+driver.set_window_size(1920, 1080)
 
 try:
-    print("[Setup] Starting Chrome...")
-    driver = uc.Chrome(options=options, use_subprocess=True)
-    driver.set_window_size(1920, 1080)
-    print("[Setup] Chrome started")
-    human_delay(2, 4)
-    
-    # Navigate
-    print("\n[1/6] Loading EuroDNS...")
+    print("[1/6] Loading EuroDNS...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
-    human_delay(4, 6)
-    take_screenshot(driver, "01_start")
+    time.sleep(5)
     
-    # Cookies
-    print("[2/6] Cookies...")
+    # Accept cookies
     try:
-        btn = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.XPATH, '//*[@id="cookiescript_accept"]'))
-        )
+        btn = driver.find_element(By.XPATH, '//*[@id="cookiescript_accept"]')
         driver.execute_script("arguments[0].click();", btn)
     except:
         pass
-    human_delay(3, 5)
+    time.sleep(3)
     
-    # Account menu
-    print("[3/6] Account menu...")
-    btn = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, '//*[@id="account-item-logout"]'))
-    )
-    driver.execute_script("arguments[0].click();", btn)
-    human_delay(3, 5)
+    # Navigate to signup
+    driver.find_element(By.XPATH, '//*[@id="account-item-logout"]').click()
+    time.sleep(3)
+    driver.find_element(By.XPATH, '//*[@id="logout-user-section"]/a[2]').click()
+    time.sleep(5)
     
-    # New Account
-    print("[4/6] New Account...")
-    btn = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, '//*[@id="logout-user-section"]/a[2]'))
-    )
-    driver.execute_script("arguments[0].click();", btn)
-    human_delay(5, 8)
-    take_screenshot(driver, "04_form")
-    
-    # Fill form
-    print("[5/6] Filling form...")
-    email = create_temp_email()
-    password = generate_strong_password()
-    print(f"      Email: {email}")
-    print(f"      Pass: {password}")
-    
-    # Email
-    email_field = WebDriverWait(driver, 15).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email']"))
-    )
-    for char in email:
-        email_field.send_keys(char)
-        time.sleep(random.uniform(0.1, 0.3))
-    human_delay(2, 4)
-    
-    # Password
-    pass_field = driver.find_element(By.CSS_SELECTOR, "input[type='password']")
-    for char in password:
-        pass_field.send_keys(char)
-        time.sleep(random.uniform(0.1, 0.3))
-    human_delay(3, 5)
-    
-    # Uncheck newsletter
+    # Check for captcha
+    site_key = None
     try:
-        cb = driver.find_element(By.XPATH, '//*[@id="subscribe-newsletter-checkbox-input"]')
-        driver.execute_script("arguments[0].click();", cb)
+        captcha_frame = driver.find_element(By.XPATH, "//iframe[contains(@src, 'recaptcha')]")
+        src = captcha_frame.get_attribute("src")
+        # Extract site key from URL
+        if "k=" in src:
+            site_key = src.split("k=")[1].split("&")[0]
+            print(f"      Found site_key: {site_key}")
     except:
         pass
-    take_screenshot(driver, "05_filled")
+    
+    # Fill form
+    email = f"user{uuid.uuid4().hex[:10]}@gmail.com"
+    password = ''.join(random.choice(string.ascii_letters + string.digits + "!@#$%") for _ in range(16))
+    print(f"      Email: {email}")
+    
+    driver.find_element(By.CSS_SELECTOR, "input[type='email']").send_keys(email)
+    time.sleep(2)
+    driver.find_element(By.CSS_SELECTOR, "input[type='password']").send_keys(password)
+    time.sleep(2)
+    
+    # Solve captcha if present
+    if site_key:
+        token = solve_captcha_capsolver(site_key, driver.current_url)
+        if token:
+            inject_captcha_token(driver, token)
+            time.sleep(2)
     
     # Submit
-    print("[6/6] Submitting...")
-    try:
-        btn = driver.find_element(By.XPATH, "//button[contains(., 'Create')]")
-    except:
-        btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
+    driver.find_element(By.XPATH, "//button[contains(., 'Create')]").click()
+    print("      Submitted, waiting...")
+    time.sleep(30)
     
-    driver.execute_script("arguments[0].click();", btn)
-    print("      Submitted, waiting 45s...")
-    time.sleep(45)
-    take_screenshot(driver, "06_after_submit")
-    
-    # Result
-    url = driver.current_url
-    print(f"\nFinal URL: {url}")
-    
+    # Save results
     with open("credentials.txt", "w") as f:
-        f.write(f"Email: {email}\nPassword: {password}\nURL: {url}\n")
-    print("Saved credentials.txt")
+        f.write(f"Email: {email}\nPassword: {password}\nURL: {driver.current_url}\n")
+    print("Done!")
 
 except Exception as e:
-    print(f"\n[ERROR] {e}")
-    if driver:
-        take_screenshot(driver, "ERROR")
+    print(f"Error: {e}")
+    driver.save_screenshot("error.png")
 
 finally:
-    if driver:
-        try:
-            driver.quit()
-        except:
-            pass
-    print("\n[Done]")
+    driver.quit()
