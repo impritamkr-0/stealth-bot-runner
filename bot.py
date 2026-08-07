@@ -28,7 +28,6 @@ def generate_strong_password(length=16):
     return "".join(random.choice(chars) for _ in range(length))
 
 def create_temp_email():
-    """Generate random email"""
     return f"user{uuid.uuid4().hex[:10]}@mail.tm"
 
 def take_screenshot(driver, name):
@@ -53,11 +52,10 @@ if os.path.exists(EXTENSION_PATH):
 driver = None
 
 try:
-    print("[Setup] Starting Chrome (auto-downloading matching version)...")
-    # KEY FIX: Don't specify version_main, let uc download its own Chrome
+    print("[Setup] Starting Chrome...")
     driver = uc.Chrome(options=options, use_subprocess=True)
     driver.set_window_size(1920, 1080)
-    print("[Setup] Chrome started successfully")
+    print("[Setup] Chrome started")
     time.sleep(2)
     
     # Navigate
@@ -121,16 +119,51 @@ try:
         pass
     take_screenshot(driver, "05_filled")
     
-    # Submit
+    # Submit - FIXED: Use correct XPath from original code
     print("[6/6] Submitting...")
-    try:
-        btn = driver.find_element(By.XPATH, "//button[contains(text(), 'Create')]")
-        driver.execute_script("arguments[0].click();", btn)
-    except:
-        btn = driver.find_element(By.CSS_SELECTOR, "button[type='submit']")
-        driver.execute_script("arguments[0].click();", btn)
     
-    print("      Waiting 30s for captcha solve...")
+    # Try multiple selectors
+    create_btn = None
+    selectors = [
+        "//button[contains(., 'Create Account')]",
+        "//button[contains(., 'Create')]",
+        "//button[contains(@class, 'submit')]",
+        "//edns-new-account//button",
+        "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button",
+        "button[type='submit']",
+        "button.btn-primary",
+        "//button[@type='submit']"
+    ]
+    
+    for selector in selectors:
+        try:
+            if selector.startswith("//"):
+                create_btn = driver.find_element(By.XPATH, selector)
+            else:
+                create_btn = driver.find_element(By.CSS_SELECTOR, selector)
+            if create_btn:
+                print(f"      Found button with: {selector}")
+                break
+        except:
+            continue
+    
+    if not create_btn:
+        # Last resort - find any button in the form
+        try:
+            form = driver.find_element(By.TAG_NAME, "form")
+            create_btn = form.find_element(By.TAG_NAME, "button")
+            print("      Found button in form")
+        except:
+            raise Exception("Cannot find submit button")
+    
+    # Scroll and click
+    driver.execute_script("arguments[0].scrollIntoView(true);", create_btn)
+    human_delay(1, 2)
+    driver.execute_script("arguments[0].click();", create_btn)
+    print("      Clicked submit")
+    
+    # Wait for captcha
+    print("      Waiting 30s for captcha...")
     time.sleep(30)
     take_screenshot(driver, "06_after_captcha")
     
