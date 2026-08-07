@@ -37,7 +37,9 @@ jobs:
             libgbm1 \
             libxshmfence1 \
             wget \
-            unzip
+            unzip \
+            tesseract-ocr \
+            ffmpeg
       
       - name: Install Chrome
         run: |
@@ -50,18 +52,11 @@ jobs:
         run: |
           pip install -r requirements.txt
       
-      - name: Download NopeCHA Extension
+      - name: Download Buster Extension
         run: |
-          python -c "
-          import requests
-          import os
-          extension_id = 'dknlfmjaanfblgfdfebhijalfmhmjjjo'
-          crx_url = f'https://clients2.google.com/service/update2/crx?response=redirect&prodversion=119.0&acceptformat=crx2,crx3&x=id%3D{extension_id}%26uc'
-          response = requests.get(crx_url)
-          with open('nopecha.crx', 'wb') as f:
-              f.write(response.content)
-          print(f'Downloaded extension: {len(response.content)} bytes')
-          "
+          wget -q "https://github.com/dessant/buster/releases/download/v3.1.0/buster_captcha_solver-3.1.0.crx" -O buster.crx || \
+          wget -q "https://github.com/dessant/buster/releases/download/v3.0.1/buster_captcha_solver-3.0.1.crx" -O buster.crx
+          ls -la buster.crx
       
       - name: Run Bot
         env:
