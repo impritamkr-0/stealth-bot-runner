@@ -79,10 +79,11 @@ def safe_click(page, selectors):
 # Free Audio CAPTCHA Solver
 # -------------------------------------------------------------
 def solve_audio_recaptcha(page):
-    """Detects reCAPTCHA iframe, clicks Audio button, transcribes speech, and submits."""
+    """Targets the challenge bframe directly, clicks Audio button, transcribes speech, and submits."""
     print("[CAPTCHA] Checking for reCAPTCHA challenge...")
     try:
-        recaptcha_iframe = page.frame_locator('iframe[title*="recaptcha challenge"], iframe[src*="recaptcha"]')
+        # Target the challenge bframe specifically to prevent strict mode violation
+        recaptcha_iframe = page.frame_locator('iframe[src*="api2/bframe"]')
         audio_btn = recaptcha_iframe.locator('#recaptcha-audio-button')
         
         if audio_btn.is_visible(timeout=5000):
@@ -114,7 +115,7 @@ def solve_audio_recaptcha(page):
                 verify_btn = recaptcha_iframe.locator('#recaptcha-verify-button')
                 verify_btn.click(force=True)
                 time.sleep(3)
-                print("      Audio CAPTCHA submitted.")
+                print("      Audio CAPTCHA submitted successfully.")
                 return True
     except Exception as e:
         print(f"      Audio CAPTCHA note: {e}")
@@ -226,18 +227,18 @@ def run():
 
             # Step 7: Navigating to login page to test registration
             print("[7/7] Navigating to login page to verify credentials...")
-            page.goto("https://my.eurodns.com/login", wait_until="domcontentloaded", timeout=60000)
+            page.goto("https://my.eurodns.com/login", wait_until="networkidle", timeout=60000)
             time.sleep(3)
 
             try:
-                login_email = page.locator("input[type='email'], input[name='email']").first
-                login_email.wait_for(state="attached", timeout=10000)
+                login_email = page.locator("input[type='email'], input[name='email'], input[formcontrolname='email'], input[formcontrolname='login']").first
+                login_email.wait_for(state="visible", timeout=15000)
                 login_email.fill(real_email)
 
-                login_pass = page.locator("input[type='password'], input[name='password']").first
+                login_pass = page.locator("input[type='password'], input[name='password'], input[formcontrolname='password']").first
                 login_pass.fill(eurodns_pass)
 
-                login_btn_selectors = ["button[type='submit']"]
+                login_btn_selectors = ["button[type='submit']", "button:has-text('Log in')"]
                 safe_click(page, login_btn_selectors)
                 time.sleep(10)
             except Exception as e:
