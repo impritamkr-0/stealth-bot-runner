@@ -64,7 +64,6 @@ def human_delay(min_sec=2.0, max_sec=4.0):
 # Main Execution Workflow
 # -------------------------------------------------------------
 ext_path = os.path.abspath("nopecha-chromium")
-settings_source = os.path.abspath("nopecha_settings")
 
 if not os.path.exists(ext_path):
     raise FileNotFoundError(f"Could not find 'nopecha-chromium' at {ext_path}.")
@@ -72,30 +71,23 @@ if not os.path.exists(ext_path):
 temp_dir = tempfile.mkdtemp(prefix="stealth_bot_")
 profile_dir = os.path.join(temp_dir, "chrome_profile")
 
-# Pre-populate extension settings into fresh profile
-if os.path.exists(settings_source):
-    target_settings_path = os.path.join(profile_dir, "Default", "Local Extension Settings", "dknlfmjaanfblgfdfebhijalfmhmjjjo")
-    os.makedirs(os.path.dirname(target_settings_path), exist_ok=True)
-    shutil.copytree(settings_source, target_settings_path, dirs_exist_ok=True)
-    print(f"[Extension] Pre-loaded local NopeCHA settings from: {settings_source}")
-
 try:
     options = uc.ChromeOptions()
     options.add_argument(f"--user-data-dir={profile_dir}")
     options.add_argument(f"--load-extension={ext_path}")
     options.add_argument(f"--disable-extensions-except={ext_path}")
 
-    print("[1/7] Launching Chrome with initialized NopeCHA profile...")
+    print("[1/8] Launching Chrome with NopeCHA extension...")
     driver = uc.Chrome(options=options, version_main=150)
     time.sleep(5)
 
     # Step 2: Navigate to EuroDNS
-    print("[2/7] Navigating to EuroDNS registration page...")
+    print("[2/8] Navigating to EuroDNS registration page...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
     human_delay(3, 5)
 
     # Step 3: Accept Cookies
-    print("[3/7] Accepting cookies...")
+    print("[3/8] Accepting cookies...")
     try:
         accept_cookies = WebDriverWait(driver, 8).until(
             EC.element_to_be_clickable((By.XPATH, '//*[@id="cookiescript_accept"]'))
@@ -106,7 +98,7 @@ try:
     human_delay(2, 3)
 
     # Step 4: Open Registration Form
-    print("[4/7] Opening Account menu & clicking 'New Account'...")
+    print("[4/8] Opening Account menu & clicking 'New Account'...")
     account_btn = WebDriverWait(driver, 10).until(
         EC.element_to_be_clickable((By.XPATH, '//*[@id="account-item-logout"]'))
     )
@@ -120,7 +112,7 @@ try:
     human_delay(4, 5)
 
     # Step 5: Fill Credentials
-    print("[5/7] Generating real temp email & password...")
+    print("[5/8] Generating real temp email & password...")
     real_email = create_real_temp_email()
     eurodns_pass = generate_strong_password(16)
 
@@ -153,7 +145,7 @@ try:
     human_delay(2, 3)
 
     # Step 6: Click Create Account
-    print("[6/7] Clicking 'Create Account' button to trigger CAPTCHA...")
+    print("[6/8] Clicking 'Create Account' button to trigger CAPTCHA...")
     create_account_xpath = "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]"
     
     try:
@@ -167,17 +159,47 @@ try:
         )
         driver.execute_script("arguments[0].click();", create_btn)
 
-    print("      Button clicked! Waiting 60 seconds for NopeCHA to solve CAPTCHA...")
-    time.sleep(60)
+    print("      Button clicked! Waiting 45s for CAPTCHA solve...")
+    time.sleep(45)
 
-    # Step 7: Check Final Navigation
-    account_summary_url = "https://my.eurodns.com/account-summary"
-    print(f"[7/7] Navigating to account summary: {account_summary_url}")
-    driver.get(account_summary_url)
-    time.sleep(10)
+    # Secondary click to submit token if form is still active
+    try:
+        print("      Submitting form with solved CAPTCHA token...")
+        driver.execute_script("arguments[0].click();", create_btn)
+        time.sleep(15)
+    except Exception:
+        pass
 
+    driver.save_screenshot("screenshot_after_registration.png")
+
+    # Step 7: Perform Actual Login Verification
+    print("[7/8] Navigating to Login Page to test new credentials...")
+    driver.get("https://my.eurodns.com/login")
+    human_delay(3, 5)
+
+    try:
+        login_email = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[formcontrolname='login']"))
+        )
+        set_angular_input(driver, login_email, real_email)
+
+        login_pass = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'], input[name='password']"))
+        )
+        set_angular_input(driver, login_pass, eurodns_pass)
+
+        login_btn = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR, "button[type='submit']"))
+        )
+        driver.execute_script("arguments[0].click();", login_btn)
+        print("      Login form submitted! Waiting 15 seconds...")
+        time.sleep(15)
+    except Exception as e:
+        print(f"      Login attempt note: {e}")
+
+    # Step 8: Verify Final URL
     current_url = driver.current_url
-    print(f"      Landed URL: {current_url}")
+    print(f"[8/8] Landed URL after login: {current_url}")
 
     driver.save_screenshot("screenshot.png")
 
