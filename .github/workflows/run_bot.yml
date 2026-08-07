@@ -52,33 +52,35 @@ jobs:
         run: |
           pip install -r requirements.txt
       
-- name: Download Buster Extension
-  run: |
-    python -c "
-    import requests
-    import os
-    
-    urls = [
-        'https://github.com/dessant/buster/releases/download/v3.1.0/buster_captcha_solver-3.1.0.crx',
-        'https://github.com/dessant/buster/releases/download/v3.0.1/buster_captcha_solver-3.0.1.crx',
-    ]
-    
-    for url in urls:
-        try:
-            print(f'Trying {url}...')
-            r = requests.get(url, timeout=30, allow_redirects=True)
-            if r.status_code == 200 and len(r.content) > 1000:
-                with open('buster.crx', 'wb') as f:
-                    f.write(r.content)
-                print(f'Success: {len(r.content)} bytes')
-                break
-        except Exception as e:
-            print(f'Failed: {e}')
-    
-    if not os.path.exists('buster.crx'):
-        print('WARNING: Buster not downloaded')
-        open('buster.crx', 'w').close()
-    "
+      - name: Download Buster Extension
+        run: |
+          python -c "
+          import requests
+          import os
+          
+          urls = [
+              'https://github.com/dessant/buster/releases/download/v3.1.0/buster_captcha_solver-3.1.0.crx',
+              'https://github.com/dessant/buster/releases/download/v3.0.1/buster_captcha_solver-3.0.1.crx',
+          ]
+          
+          downloaded = False
+          for url in urls:
+              try:
+                  print(f'Trying {url}...')
+                  r = requests.get(url, timeout=30, allow_redirects=True)
+                  if r.status_code == 200 and len(r.content) > 1000:
+                      with open('buster.crx', 'wb') as f:
+                          f.write(r.content)
+                      print(f'Success: {len(r.content)} bytes')
+                      downloaded = True
+                      break
+              except Exception as e:
+                  print(f'Failed: {e}')
+          
+          if not downloaded:
+              print('WARNING: Buster not downloaded, continuing without it')
+              open('buster.crx', 'w').close()
+          "
       
       - name: Run Bot
         env:
