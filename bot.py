@@ -47,18 +47,33 @@ def generate_strong_password(length=16):
     return "".join(password)
 
 # -------------------------------------------------------------
-# Helper: Resilient Click Handler (Bypasses Viewport Offscreen Issues)
+# Helper: Safe Multi-Selector Click Handler
 # -------------------------------------------------------------
-def safe_click(locator):
-    """Tries normal click, then forced click, and finally DOM JS click."""
-    try:
-        locator.scroll_into_view_if_needed(timeout=3000)
-        locator.click(timeout=3000)
-    except Exception:
+def safe_click(page, selectors):
+    """Tries a list of distinct selectors sequentially to ensure reliable clicks."""
+    for sel in selectors:
         try:
-            locator.click(force=True, timeout=3000)
+            loc = page.locator(sel).first
+            if loc.is_visible(timeout=2000):
+                loc.scroll_into_view_if_needed(timeout=2000)
+                loc.click(timeout=2000)
+                return True
         except Exception:
-            locator.evaluate("el => el.click()")
+            pass
+
+    # Fallback to forced click or JS click if element is present in DOM
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            loc.click(force=True, timeout=2000)
+            return True
+        except Exception:
+            try:
+                loc.evaluate("el => el.click()")
+                return True
+            except Exception:
+                pass
+    return False
 
 # -------------------------------------------------------------
 # Free Audio CAPTCHA Solver
@@ -133,22 +148,31 @@ def run():
 
             # Step 2: Accept Cookies
             print("[3/7] Accepting cookies...")
-            try:
-                cookie_btn = page.locator('#cookiescript_accept, //*[@id="cookiescript_accept"]').first
-                safe_click(cookie_btn)
+            cookie_selectors = [
+                "#cookiescript_accept",
+                "xpath=//*[@id='cookiescript_accept']"
+            ]
+            if safe_click(page, cookie_selectors):
                 print("      Cookies accepted.")
-            except Exception as e:
-                print(f"      Cookie note: {e}")
+            else:
+                print("      Cookie banner not found or already dismissed.")
             time.sleep(2)
 
             # Step 3: Open Account menu & click 'New Account'
             print("[4/7] Opening Account menu & clicking 'New Account'...")
-            account_btn = page.locator('#account-item-logout, //*[@id="account-item-logout"]').first
-            safe_click(account_btn)
+            account_menu_selectors = [
+                "#account-item-logout",
+                "xpath=//*[@id='account-item-logout']"
+            ]
+            safe_click(page, account_menu_selectors)
             time.sleep(2)
 
-            new_acc_btn = page.locator('#logout-user-section a:nth-child(2), //*[@id="logout-user-section"]/a[2], a[href*="createNewAccount"]').first
-            safe_click(new_acc_btn)
+            new_account_selectors = [
+                "#logout-user-section a:nth-child(2)",
+                "xpath=//*[@id='logout-user-section']/a[2]",
+                "a[href*='createNewAccount']"
+            ]
+            safe_click(page, new_account_selectors)
             time.sleep(4)
 
             # Step 4: Fill Credentials
@@ -172,29 +196,30 @@ def run():
             time.sleep(1)
 
             # Newsletter Checkbox
-            try:
-                chk = page.locator('#subscribe-newsletter-checkbox-input, //*[@id="subscribe-newsletter-checkbox-input"]').first
-                safe_click(chk)
-            except Exception:
-                pass
+            checkbox_selectors = [
+                "#subscribe-newsletter-checkbox-input",
+                "xpath=//*[@id='subscribe-newsletter-checkbox-input']"
+            ]
+            safe_click(page, checkbox_selectors)
+            time.sleep(2)
 
             page.screenshot(path="screenshot_form_filled.png")
 
             # Step 5: Click 'Create Account'
             print("[6/7] Clicking 'Create Account' button...")
-            create_account_xpath = "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button"
-            create_btn = page.locator(f"xpath={create_account_xpath}, edns-new-account button[type='submit'], form button:has-text('Create account')").first
-            safe_click(create_btn)
+            create_btn_selectors = [
+                "xpath=/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button",
+                "edns-new-account button[type='submit']",
+                "button:has-text('Create account')"
+            ]
+            safe_click(page, create_btn_selectors)
             time.sleep(4)
 
             # Step 6: Solve CAPTCHA if presented
             solve_audio_recaptcha(page)
 
             # Secondary submit click post-solve
-            try:
-                safe_click(create_btn)
-            except Exception:
-                pass
+            safe_click(page, create_btn_selectors)
 
             time.sleep(10)
             page.screenshot(path="screenshot_after_registration.png")
@@ -212,8 +237,8 @@ def run():
                 login_pass = page.locator("input[type='password'], input[name='password']").first
                 login_pass.fill(eurodns_pass)
 
-                login_btn = page.locator("button[type='submit']").first
-                safe_click(login_btn)
+                login_btn_selectors = ["button[type='submit']"]
+                safe_click(page, login_btn_selectors)
                 time.sleep(10)
             except Exception as e:
                 print(f"      Login verification note: {e}")
