@@ -47,62 +47,66 @@ def generate_strong_password(length=16):
     return "".join(password)
 
 # -------------------------------------------------------------
+# Helper: Resilient Click Handler (Bypasses Viewport Offscreen Issues)
+# -------------------------------------------------------------
+def safe_click(locator):
+    """Tries normal click, then forced click, and finally DOM JS click."""
+    try:
+        locator.scroll_into_view_if_needed(timeout=3000)
+        locator.click(timeout=3000)
+    except Exception:
+        try:
+            locator.click(force=True, timeout=3000)
+        except Exception:
+            locator.evaluate("el => el.click()")
+
+# -------------------------------------------------------------
 # Free Audio CAPTCHA Solver
 # -------------------------------------------------------------
 def solve_audio_recaptcha(page):
-    """Detects reCAPTCHA iframe, clicks Audio option, transcribes audio to text, and submits."""
-    print("[CAPTCHA] Attempting 100% Free Audio reCAPTCHA Solve...")
+    """Detects reCAPTCHA iframe, clicks Audio button, transcribes speech, and submits."""
+    print("[CAPTCHA] Checking for reCAPTCHA challenge...")
     try:
-        # Locate reCAPTCHA Challenge iframe
-        bframe = page.frame_locator('iframe[title*="recaptcha challenge"]')
+        recaptcha_iframe = page.frame_locator('iframe[title*="recaptcha challenge"], iframe[src*="recaptcha"]')
+        audio_btn = recaptcha_iframe.locator('#recaptcha-audio-button')
         
-        # Click Audio Challenge Button
-        audio_btn = bframe.locator('#recaptcha-audio-button')
-        audio_btn.click(timeout=5000)
-        time.sleep(2)
+        if audio_btn.is_visible(timeout=5000):
+            print("      Audio challenge button found. Clicking...")
+            audio_btn.click(force=True)
+            time.sleep(2)
 
-        # Grab Audio Source URL
-        audio_source = bframe.locator('#audio-source')
-        src_url = audio_source.get_attribute('src')
+            audio_source = recaptcha_iframe.locator('#audio-source')
+            src_url = audio_source.get_attribute('src')
 
-        if not src_url:
-            print("      Audio URL not found directly, re-checking frame...")
-            return False
+            if src_url:
+                print("      Downloading audio MP3 file...")
+                urllib.request.urlretrieve(src_url, "captcha.mp3")
 
-        print("      Downloading audio challenge MP3...")
-        urllib.request.urlretrieve(src_url, "captcha.mp3")
+                sound = pydub.AudioSegment.from_mp3("captcha.mp3")
+                sound.export("captcha.wav", format="wav")
 
-        # Convert MP3 to WAV using pydub
-        sound = pydub.AudioSegment.from_mp3("captcha.mp3")
-        sound.export("captcha.wav", format="wav")
+                recognizer = sr.Recognizer()
+                with sr.AudioFile("captcha.wav") as source:
+                    audio_data = recognizer.record(source)
+                    text_result = recognizer.recognize_google(audio_data)
 
-        # Speech-to-Text using free SpeechRecognition engine
-        recognizer = sr.Recognizer()
-        with sr.AudioFile("captcha.wav") as source:
-            audio_data = recognizer.record(source)
-            text_result = recognizer.recognize_google(audio_data)
+                print(f"      Transcribed Audio Code: '{text_result}'")
 
-        print(f"      Transcribed Audio Code: '{text_result}'")
+                audio_response_input = recaptcha_iframe.locator('#audio-response')
+                audio_response_input.fill(text_result)
+                time.sleep(1)
 
-        # Type response into CAPTCHA box
-        audio_response_input = bframe.locator('#audio-response')
-        audio_response_input.fill(text_result)
-        time.sleep(1)
-
-        # Click Verify Button
-        verify_btn = bframe.locator('#recaptcha-verify-button')
-        verify_btn.click()
-        time.sleep(3)
-        
-        print("      🎉 Audio CAPTCHA verified successfully!")
-        return True
-
+                verify_btn = recaptcha_iframe.locator('#recaptcha-verify-button')
+                verify_btn.click(force=True)
+                time.sleep(3)
+                print("      Audio CAPTCHA submitted.")
+                return True
     except Exception as e:
         print(f"      Audio CAPTCHA note: {e}")
-        return False
+    return False
 
 # -------------------------------------------------------------
-# Main Execution Workflow via Playwright
+# Main Execution Workflow
 # -------------------------------------------------------------
 def run():
     with sync_playwright() as p:
@@ -122,27 +126,32 @@ def run():
         page = context.new_page()
 
         try:
-            # Step 2: Navigate to EuroDNS
+            # Step 1: Navigate to main referral link
             print("[2/7] Navigating to EuroDNS registration page...")
             page.goto("https://eurodns.pxf.io/PzkDy6", wait_until="domcontentloaded", timeout=60000)
             time.sleep(3)
 
-            # Step 3: Accept Cookies
+            # Step 2: Accept Cookies
             print("[3/7] Accepting cookies...")
             try:
-                page.click('#cookiescript_accept', timeout=5000)
+                cookie_btn = page.locator('#cookiescript_accept, //*[@id="cookiescript_accept"]').first
+                safe_click(cookie_btn)
                 print("      Cookies accepted.")
-            except Exception:
-                pass
-
-            # Step 4: Open Registration Form
-            print("[4/7] Opening Account menu & clicking 'New Account'...")
-            page.click('#account-item-logout', timeout=10000)
+            except Exception as e:
+                print(f"      Cookie note: {e}")
             time.sleep(2)
-            page.click('#logout-user-section a:nth-child(2)', timeout=10000)
-            time.sleep(3)
 
-            # Step 5: Fill Credentials
+            # Step 3: Open Account menu & click 'New Account'
+            print("[4/7] Opening Account menu & clicking 'New Account'...")
+            account_btn = page.locator('#account-item-logout, //*[@id="account-item-logout"]').first
+            safe_click(account_btn)
+            time.sleep(2)
+
+            new_acc_btn = page.locator('#logout-user-section a:nth-child(2), //*[@id="logout-user-section"]/a[2], a[href*="createNewAccount"]').first
+            safe_click(new_acc_btn)
+            time.sleep(4)
+
+            # Step 4: Fill Credentials
             print("[5/7] Generating real temp email & password...")
             real_email = create_real_temp_email()
             eurodns_pass = generate_strong_password(16)
@@ -153,68 +162,68 @@ def run():
             print(f"  PASSWORD: {eurodns_pass}")
             print(f"==================================================\n")
 
-            # Fill Email
-            email_input = page.locator("input[type='email'], input[formcontrolname='email'], input[name='email']").first
-            email_input.fill(real_email)
+            email_field = page.locator("input[type='email'], input[formcontrolname='email'], input[name='email']").first
+            email_field.wait_for(state="attached", timeout=15000)
+            email_field.fill(real_email)
             time.sleep(1)
 
-            # Fill Password
-            pass_input = page.locator("input[type='password'], input[formcontrolname='password']").first
-            pass_input.fill(eurodns_pass)
+            pass_field = page.locator("input[type='password'], input[formcontrolname='password']").first
+            pass_field.fill(eurodns_pass)
             time.sleep(1)
 
-            # Checkbox
+            # Newsletter Checkbox
             try:
-                page.click('#subscribe-newsletter-checkbox-input', timeout=3000)
+                chk = page.locator('#subscribe-newsletter-checkbox-input, //*[@id="subscribe-newsletter-checkbox-input"]').first
+                safe_click(chk)
             except Exception:
                 pass
 
             page.screenshot(path="screenshot_form_filled.png")
 
-            # Step 6: Click Create Account
+            # Step 5: Click 'Create Account'
             print("[6/7] Clicking 'Create Account' button...")
-            create_btn = page.locator("edns-new-account button[type='submit'], form button:has-text('Create account')").first
-            create_btn.click()
-            time.sleep(5)
+            create_account_xpath = "/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button"
+            create_btn = page.locator(f"xpath={create_account_xpath}, edns-new-account button[type='submit'], form button:has-text('Create account')").first
+            safe_click(create_btn)
+            time.sleep(4)
 
-            # Trigger Free Audio CAPTCHA solve if modal appeared
+            # Step 6: Solve CAPTCHA if presented
             solve_audio_recaptcha(page)
 
-            # Final submit click after CAPTCHA solve
+            # Secondary submit click post-solve
             try:
-                create_btn.click(timeout=3000)
+                safe_click(create_btn)
             except Exception:
                 pass
 
             time.sleep(10)
             page.screenshot(path="screenshot_after_registration.png")
 
-            # Step 7: Verify Login Session
-            print("[7/7] Navigating to Login Page to verify credentials...")
+            # Step 7: Navigating to login page to test registration
+            print("[7/7] Navigating to login page to verify credentials...")
             page.goto("https://my.eurodns.com/login", wait_until="domcontentloaded", timeout=60000)
             time.sleep(3)
 
-            # Fill Login Form using Playwright auto-wait
             try:
                 login_email = page.locator("input[type='email'], input[name='email']").first
+                login_email.wait_for(state="attached", timeout=10000)
                 login_email.fill(real_email)
 
                 login_pass = page.locator("input[type='password'], input[name='password']").first
                 login_pass.fill(eurodns_pass)
 
                 login_btn = page.locator("button[type='submit']").first
-                login_btn.click()
+                safe_click(login_btn)
                 time.sleep(10)
             except Exception as e:
-                print(f"      Login step note: {e}")
+                print(f"      Login verification note: {e}")
 
             current_url = page.url
             print(f"      Landed URL: {current_url}")
-
             page.screenshot(path="screenshot.png")
 
             print("\n==================================================")
-            print("Workflow Completed Successfully!")
+            print("Workflow Completed!")
             print(f"Landed URL: {current_url}")
             print(f"Credentials -> Email: {real_email} | Password: {eurodns_pass}")
             print("==================================================\n")
