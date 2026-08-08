@@ -1,7 +1,6 @@
 undetected-chromedriver
 selenium
-selenium-recaptcha-solver
-pydub
-SpeechRecognition
+ultralytics
+opencv-python
+pillow
 requests
-urllib3
