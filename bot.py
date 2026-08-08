@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import time
 import uuid
 import json
@@ -8,6 +9,7 @@ import random
 import tempfile
 import shutil
 import requests
+import subprocess
 import urllib.request
 from PIL import Image
 from ultralytics import YOLO
@@ -15,6 +17,37 @@ import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+
+# Helper function to auto-detect installed Chrome version
+def get_chrome_major_version():
+    """Detects the installed Google Chrome major version on Linux/Windows."""
+    try:
+        # Check Linux Chrome binary version
+        output = subprocess.check_output(["google-chrome", "--version"]).decode('utf-8')
+        match = re.search(r"Google Chrome (\d+)\.", output)
+        if match:
+            version = int(match.group(1))
+            print(f"[Init] Auto-detected installed Chrome version: {version}")
+            return version
+    except Exception:
+        pass
+
+    try:
+        # Fallback for Windows environment
+        output = subprocess.check_output(
+            r'wmic datafile where name="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" get Version /value',
+            shell=True
+        ).decode('utf-8')
+        match = re.search(r"Version=(\d+)\.", output)
+        if match:
+            version = int(match.group(1))
+            print(f"[Init] Auto-detected installed Chrome version: {version}")
+            return version
+    except Exception:
+        pass
+
+    print("[Init] Could not auto-detect version. Defaulting to automatic match...")
+    return None
 
 # Initialize YOLO model once at top level
 print("[Init] Loading YOLOv8s vision model...")
@@ -190,7 +223,9 @@ options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--window-size=1920,1080")
 
-driver = uc.Chrome(options=options)
+# Auto-detect Chrome version and pass version_main
+installed_chrome_version = get_chrome_major_version()
+driver = uc.Chrome(options=options, version_main=installed_chrome_version)
 
 try:
     print("[1/6] Navigating to EuroDNS...")
