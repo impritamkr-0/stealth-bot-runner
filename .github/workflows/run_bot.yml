@@ -1,73 +1,31 @@
 name: Run EuroDNS Bot
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allows manual trigger from GitHub Actions UI
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
-      
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      
-      - name: Install system dependencies
+
+      - name: Install System Dependencies (FFmpeg, Xvfb, Chrome)
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            xvfb \
-            libgtk-3-dev \
-            libnotify-dev \
-            libnss3 \
-            libxss1 \
-            libasound2t64 \
-            libxtst6 \
-            libpci3 \
-            libpangocairo-1.0-0 \
-            libx11-xcb1 \
-            libxcb-dri3-0 \
-            libdrm2 \
-            libgbm1 \
-            libxshmfence1 \
-            wget \
-            unzip
-      
-      - name: Install Chrome
+          sudo apt-get install -y ffmpeg xvfb google-chrome-stable
+
+      - name: Install Python Dependencies
         run: |
-          wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | sudo apt-key add -
-          sudo sh -c 'echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list'
-          sudo apt-get update
-          sudo apt-get install -y google-chrome-stable
-      
-      - name: Install Python dependencies
-        run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt
-      
-      - name: Run Bot
-        env:
-          DISPLAY: :99
+
+      - name: Run Bot in Virtual Framebuffer (Xvfb)
         run: |
-          Xvfb :99 -screen 0 1920x1080x24 > /dev/null 2>&1 &
-          sleep 3
-          python bot.py
-      
-      - name: Upload Screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots
-          path: "*.png"
-      
-      - name: Upload Credentials
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: credentials
-          path: "credentials.txt"
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python bot.py
