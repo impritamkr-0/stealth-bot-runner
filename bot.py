@@ -18,11 +18,9 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-# Helper function to auto-detect installed Chrome version
+# Auto-detect installed Chrome version
 def get_chrome_major_version():
-    """Detects the installed Google Chrome major version on Linux/Windows."""
     try:
-        # Check Linux Chrome binary version
         output = subprocess.check_output(["google-chrome", "--version"]).decode('utf-8')
         match = re.search(r"Google Chrome (\d+)\.", output)
         if match:
@@ -33,7 +31,6 @@ def get_chrome_major_version():
         pass
 
     try:
-        # Fallback for Windows environment
         output = subprocess.check_output(
             r'wmic datafile where name="C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" get Version /value',
             shell=True
@@ -46,119 +43,139 @@ def get_chrome_major_version():
     except Exception:
         pass
 
-    print("[Init] Could not auto-detect version. Defaulting to automatic match...")
+    print("[Init] Defaulting version matching...")
     return None
 
-# Initialize YOLO model once at top level
 print("[Init] Loading YOLOv8s vision model...")
 model = YOLO("yolov8s.pt")
 
 LABEL_MAP = {
-    "bicycles": "bicycle", "bicycle": "bicycle",
-    "cars": "car", "car": "car",
-    "buses": "bus", "bus": "bus",
+    "bicycles": "bicycle", "bicycle": "bicycle", "a bicycle": "bicycle",
+    "cars": "car", "car": "car", "vehicles": "car", "a car": "car",
+    "buses": "bus", "bus": "bus", "a bus": "bus",
     "motorcycles": "motorcycle", "motorcycle": "motorcycle",
-    "traffic lights": "traffic light", "traffic light": "traffic light",
-    "fire hydrants": "fire hydrant", "fire hydrant": "fire hydrant",
-    "boats": "boat", "trains": "train"
+    "traffic lights": "traffic light", "traffic light": "traffic light", "a traffic light": "traffic light",
+    "fire hydrants": "fire hydrant", "fire hydrant": "fire hydrant", "a fire hydrant": "fire hydrant",
+    "boats": "boat", "boat": "boat", "trains": "train"
 }
+
+UNSUPPORTED_PROMPTS = [
+    "crosswalk", "crosswalks", "bridge", "bridges", "chimney", "chimneys",
+    "stairs", "palm tree", "palm trees", "mountain", "mountains", "statue"
+]
 
 # -------------------------------------------------------------
 # 1. Vision Solver Core Functions
 # -------------------------------------------------------------
-def detect_target_tiles(full_img, yolo_target, rows=3, cols=3, conf_thresh=0.20, min_overlap=0.08):
+def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
     w, h = full_img.size
     tile_w, tile_h = w / cols, h / rows
     tile_area = tile_w * tile_h
-
-    results = model(full_img, verbose=False)
     click_indices = set()
 
-    for result in results:
+    results_full = model(full_img, verbose=False, conf=0.15)
+    for result in results_full:
         for box in result.boxes:
             detected_class = model.names[int(box.cls[0])].lower()
             conf = float(box.conf[0])
 
-            if detected_class == yolo_target and conf >= conf_thresh:
+            if detected_class == yolo_target:
                 bx1, by1, bx2, by2 = box.xyxy[0].tolist()
-
                 for r in range(rows):
                     for c in range(cols):
                         tx1, ty1 = c * tile_w, r * tile_h
                         tx2, ty2 = (c + 1) * tile_w, (r + 1) * tile_h
 
-                        ix1, iy1 = max(bx1, tx1), max(by1, ty1)
-                        ix2, iy2 = min(bx2, tx2), min(by2, ty2)
+                        inter_w = max(0.0, min(bx2, tx2) - max(bx1, tx1))
+                        inter_h = max(0.0, min(by2, ty2) - max(by1, ty1))
+                        inter_area = inter_w * inter_h
 
-                        inter_area = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-
-                        if (inter_area / tile_area) >= min_overlap:
+                        if (inter_area / tile_area) >= 0.08:
                             tile_idx = r * cols + c
                             click_indices.add(tile_idx)
-                            print(f"      [Vision Match] Tile {tile_idx} contains '{detected_class}' ({conf:.2f})")
+                            print(f"      [Canvas Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
+
+    for r in range(rows):
+        for c in range(cols):
+            tile_idx = r * cols + c
+            box = (int(c * tile_w), int(r * tile_h), int((c + 1) * tile_w), int((r + 1) * tile_h))
+            tile_crop = full_img.crop(box)
+
+            tile_results = model(tile_crop, verbose=False, conf=0.12)
+            for result in tile_results:
+                for box in result.boxes:
+                    detected_class = model.names[int(box.cls[0])].lower()
+                    conf = float(box.conf[0])
+
+                    if detected_class == yolo_target:
+                        click_indices.add(tile_idx)
+                        print(f"      [Tile Crop Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
 
     return sorted(list(click_indices))
 
 def reload_captcha(driver):
-    print("      0 tiles matched. Reloading challenge...")
+    print("      Reloading challenge for a recognizable prompt...")
     try:
         reload_btn = driver.find_element(By.ID, "recaptcha-reload-button")
         driver.execute_script("arguments[0].click();", reload_btn)
         time.sleep(2.5)
     except Exception as e:
-        print(f"      Reload button note: {e}")
+        print(f"      Reload button interaction note: {e}")
     finally:
         driver.switch_to.default_content()
 
-def solve_recaptcha_v2(driver):
-    driver.switch_to.default_content()
+def is_recaptcha_solved(driver):
+    try:
+        driver.switch_to.default_content()
+        anchor_frame = driver.find_element(By.XPATH, '//iframe[contains(@src, "recaptcha/api2/anchor")]')
+        driver.switch_to.frame(anchor_frame)
+        checkbox = driver.find_element(By.ID, "recaptcha-anchor")
+        checked = checkbox.get_attribute("aria-checked")
+        driver.switch_to.default_content()
+        return checked == "true"
+    except Exception:
+        driver.switch_to.default_content()
+        return False
 
-    bframe = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
-    )
-    driver.switch_to.frame(bframe)
+def solve_recaptcha_v2(driver, max_attempts=8):
+    for attempt in range(max_attempts):
+        if is_recaptcha_solved(driver):
+            print("      [reCAPTCHA] Green checkmark verified!")
+            return True
 
-    instructions_elem = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
-    )
-    full_instruction_text = instructions_elem.text.lower()
-    
-    target_elem = instructions_elem.find_element(By.XPATH, './/strong')
-    prompt_text = target_elem.text.strip().lower()
-    yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
+        print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
+        driver.switch_to.default_content()
 
-    is_dynamic = "none left" in full_instruction_text or "new ones" in full_instruction_text
-    print(f"      [CAPTCHA Target]: '{prompt_text}' -> YOLO: '{yolo_target}' | Dynamic: {is_dynamic}")
+        try:
+            bframe = WebDriverWait(driver, 6).until(
+                EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
+            )
+            driver.switch_to.frame(bframe)
 
-    if not is_dynamic:
-        tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
-        grid_count = len(tile_elements)
-        rows, cols = (4, 4) if grid_count == 16 else (3, 3)
+            instructions_elem = WebDriverWait(driver, 6).until(
+                EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
+            )
+        except Exception:
+            if is_recaptcha_solved(driver):
+                return True
+            time.sleep(1.5)
+            continue
 
-        img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
-        img_bytes = requests.get(img_elem.get_attribute("src")).content
-        full_img = Image.open(io.BytesIO(img_bytes))
+        full_instruction_text = instructions_elem.text.lower()
+        target_elem = instructions_elem.find_element(By.XPATH, './/strong')
+        prompt_text = target_elem.text.strip().lower()
 
-        tiles_to_click = detect_target_tiles(full_img, yolo_target, rows=rows, cols=cols, conf_thresh=0.20)
-
-        if not tiles_to_click:
-            tiles_to_click = detect_target_tiles(full_img, yolo_target, rows=rows, cols=cols, conf_thresh=0.10)
-
-        if not tiles_to_click:
+        if any(unsupported in prompt_text for unsupported in UNSUPPORTED_PROMPTS):
+            print(f"      [Instant Skip] '{prompt_text}' is not in standard YOLO COCO dataset. Reloading...")
             reload_captcha(driver)
-            return solve_recaptcha_v2(driver)
+            time.sleep(2.0)
+            continue
 
-        for idx in tiles_to_click:
-            driver.execute_script("arguments[0].click();", tile_elements[idx])
-            time.sleep(0.3)
+        yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
+        is_dynamic = "none left" in full_instruction_text or "new ones" in full_instruction_text
+        print(f"      [Prompt]: '{prompt_text}' -> YOLO: '{yolo_target}' | Dynamic: {is_dynamic}")
 
-        time.sleep(1.0)
-
-    else:
-        max_rounds = 5
-        total_clicks = 0
-
-        for round_num in range(max_rounds):
+        if not is_dynamic:
             tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
             grid_count = len(tile_elements)
             rows, cols = (4, 4) if grid_count == 16 else (3, 3)
@@ -167,27 +184,62 @@ def solve_recaptcha_v2(driver):
             img_bytes = requests.get(img_elem.get_attribute("src")).content
             full_img = Image.open(io.BytesIO(img_bytes))
 
-            tiles_to_click = detect_target_tiles(full_img, yolo_target, rows=rows, cols=cols, conf_thresh=0.18)
+            tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
 
             if not tiles_to_click:
-                if total_clicks == 0:
-                    reload_captcha(driver)
-                    return solve_recaptcha_v2(driver)
-                else:
-                    break
+                reload_captcha(driver)
+                time.sleep(2.0)
+                continue
 
+            print(f"      Static Mode: Clicking tiles -> {tiles_to_click}")
             for idx in tiles_to_click:
                 driver.execute_script("arguments[0].click();", tile_elements[idx])
-                total_clicks += 1
-                time.sleep(2.5)
+                time.sleep(0.3)
 
-    verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
-    driver.execute_script("arguments[0].click();", verify_btn)
-    driver.switch_to.default_content()
-    print("      CAPTCHA solved and verified successfully!")
+            time.sleep(1.0)
+
+        else:
+            max_dynamic_rounds = 5
+            total_clicks = 0
+
+            for d_round in range(max_dynamic_rounds):
+                tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
+                grid_count = len(tile_elements)
+                rows, cols = (4, 4) if grid_count == 16 else (3, 3)
+
+                img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
+                img_bytes = requests.get(img_elem.get_attribute("src")).content
+                full_img = Image.open(io.BytesIO(img_bytes))
+
+                tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
+
+                if not tiles_to_click:
+                    if total_clicks == 0:
+                        reload_captcha(driver)
+                        break
+                    else:
+                        print(f"      No remaining '{yolo_target}' tiles found.")
+                        break
+
+                print(f"      Dynamic Sub-Round {d_round + 1}: Clicking -> {tiles_to_click}")
+                for idx in tiles_to_click:
+                    driver.execute_script("arguments[0].click();", tile_elements[idx])
+                    total_clicks += 1
+                    time.sleep(2.5)
+
+        try:
+            verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
+            driver.execute_script("arguments[0].click();", verify_btn)
+        except Exception:
+            pass
+
+        driver.switch_to.default_content()
+        time.sleep(2.5)
+
+    return is_recaptcha_solved(driver)
 
 # -------------------------------------------------------------
-# 2. mail.tm & Helper Functions
+# 2. Mail & Compliant Password Generation
 # -------------------------------------------------------------
 def create_real_temp_email():
     req = urllib.request.Request("https://api.mail.tm/domains", headers={'User-Agent': 'Mozilla/5.0'})
@@ -197,7 +249,7 @@ def create_real_temp_email():
     active_domain = domains_data['hydra:member'][0]['domain']
     unique_user = f"user_{uuid.uuid4().hex[:8]}"
     email_address = f"{unique_user}@{active_domain}"
-    account_password = "TempMailPassword123!"
+    account_password = generate_strong_password(16)
 
     payload = json.dumps({"address": email_address, "password": account_password}).encode('utf-8')
     post_req = urllib.request.Request(
@@ -209,11 +261,25 @@ def create_real_temp_email():
         return email_address, account_password
 
 def generate_strong_password(length=16):
-    chars = string.ascii_lowercase + string.ascii_uppercase + string.digits + "!@#$%^&*()_+-="
-    return "".join(random.choice(chars) for _ in range(length))
+    lowercase = string.ascii_lowercase
+    uppercase = string.ascii_uppercase
+    digits = string.digits
+    symbols = "!@#$%^&*()_+-="
+
+    password = [
+        random.choice(lowercase),
+        random.choice(uppercase),
+        random.choice(digits),
+        random.choice(symbols)
+    ]
+
+    all_chars = lowercase + uppercase + digits + symbols
+    password += [random.choice(all_chars) for _ in range(length - 4)]
+    random.shuffle(password)
+    return "".join(password)
 
 # -------------------------------------------------------------
-# 3. Main EuroDNS Automation Workflow
+# 3. Main Registration Automation Workflow
 # -------------------------------------------------------------
 temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
 
@@ -223,78 +289,114 @@ options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--window-size=1920,1080")
 
-# Auto-detect Chrome version and pass version_main
 installed_chrome_version = get_chrome_major_version()
 driver = uc.Chrome(options=options, version_main=installed_chrome_version)
 
 try:
-    print("[1/6] Navigating to EuroDNS...")
+    print("[1/6] Visiting EuroDNS...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
-    time.sleep(3)
-
-    # Accept Cookies
-    try:
-        cookies = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="cookiescript_accept"]')))
-        driver.execute_script("arguments[0].click();", cookies)
-    except Exception:
-        pass
-
-    # Open Account Menu -> New Account
-    print("[2/6] Navigating to New Account Registration...")
-    account_btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="account-item-logout"]')))
-    driver.execute_script("arguments[0].click();", account_btn)
     time.sleep(2)
 
-    new_account_btn = WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH, '//*[@id="logout-user-section"]/a[2]')))
+    try:
+        accept_cookies = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "cookiescript_accept"))
+        )
+        driver.execute_script("arguments[0].click();", accept_cookies)
+        print("      Cookies accepted.")
+    except Exception as e:
+        print(f"      Cookie banner note: {e}")
+
+    delay_2 = random.uniform(2.0, 5.0)
+    print(f"[2/6] Pausing {delay_2:.2f}s, then clicking 'My account'...")
+    time.sleep(delay_2)
+
+    my_account_btn = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.ID, "account-item-logout"))
+    )
+    driver.execute_script("arguments[0].click();", my_account_btn)
+
+    print("[3/6] Clicking 'New account' button...")
+    new_account_btn = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']"))
+    )
     driver.execute_script("arguments[0].click();", new_account_btn)
+
+    delay_4 = random.uniform(2.0, 5.0)
+    print(f"[4/6] Pausing {delay_4:.2f}s for form load & generating credentials...")
+    time.sleep(delay_4)
+
+    email, _ = create_real_temp_email()
+    pwd = generate_strong_password(16)
+    print(f"      Generated Email:    {email}")
+    print(f"      Generated Password: {pwd}")
+
+    email_field = WebDriverWait(driver, 15).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[id*='email']"))
+    )
+    email_field.clear()
+    for char in email:
+        email_field.send_keys(char)
+        time.sleep(0.01)
+
+    password_field = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'], input[name='password'], input[id*='password']"))
+    )
+    password_field.clear()
+    for char in pwd:
+        password_field.send_keys(char)
+        time.sleep(0.01)
+
+    print("[5/6] Checking newsletter checkbox...")
+    try:
+        checkbox = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "subscribe-newsletter-checkbox-input"))
+        )
+        driver.execute_script("arguments[0].click();", checkbox)
+    except Exception as e:
+        print(f"      Checkbox note: {e}")
+
+    print("[6/6] Clicking 'Create Account' button to trigger CAPTCHA popup...")
+    create_account_target = WebDriverWait(driver, 10).until(
+        EC.presence_of_element_located((By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']"))
+    )
+    driver.execute_script("""
+        var target = arguments[0];
+        var button = target.tagName === 'BUTTON' ? target : target.closest('button');
+        if (button) { button.click(); } else { target.click(); }
+    """, create_account_target)
     time.sleep(3)
 
-    # Fill Credentials
-    print("[3/6] Filling credentials...")
-    email, _ = create_real_temp_email()
-    pwd = generate_strong_password()
-    print(f"      Email: {email}")
+    print("[7/7] Invoking reCAPTCHA solver...")
+    is_solved = solve_recaptcha_v2(driver, max_attempts=8)
 
-    email_field = WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email']")))
-    email_field.send_keys(email)
+    if is_solved:
+        print("\n      reCAPTCHA passed! Submitting final registration form...")
+        time.sleep(1.5)
+        try:
+            remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
+            for btn in remaining_btns:
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    break
+        except Exception as e:
+            print(f"      Post-CAPTCHA click note: {e}")
 
-    password_field = driver.find_element(By.CSS_SELECTOR, "input[type='password'], input[name='password']")
-    password_field.send_keys(pwd)
-
-    # Click Newsletter Checkbox
-    try:
-        checkbox = driver.find_element(By.XPATH, '//*[@id="subscribe-newsletter-checkbox-input"]')
-        driver.execute_script("arguments[0].click();", checkbox)
-    except Exception:
-        pass
-
-    # Click Initial reCAPTCHA Anchor Checkbox
-    print("[4/6] Activating reCAPTCHA...")
-    anchor_frame = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/anchor")]'))
-    )
-    driver.switch_to.frame(anchor_frame)
-    recaptcha_box = driver.find_element(By.ID, "recaptcha-anchor")
-    driver.execute_script("arguments[0].click();", recaptcha_box)
-    time.sleep(2)
-
-    # Solve reCAPTCHA with YOLO Vision Solver
-    print("[5/6] Invoking YOLO Vision Solver...")
-    solve_recaptcha_v2(driver)
-
-    # Submit Registration
-    print("[6/6] Submitting form...")
-    create_btn = WebDriverWait(driver, 10).until(
-        EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Create') or contains(., 'Sign up')]"))
-    )
-    driver.execute_script("arguments[0].click();", create_btn)
-    
-    print("\n" + "="*50)
-    print("Account Creation Submitted Successfully!")
-    print(f"Email used: {email}")
-    print("="*50 + "\n")
-    time.sleep(10)
+        print("\n" + "="*50)
+        print("Registration Workflow Completed Successfully!")
+        print(f"Email used: {email}")
+        print("="*50 + "\n")
+    else:
+        print("\n[Warning] CAPTCHA was not completed after maximum attempts.")
 
 finally:
-    driver.quit()
+    # Auto-close Chrome and cleanly terminate all background driver processes
+    try:
+        driver.close()
+    except Exception:
+        pass
+    try:
+        driver.quit()
+    except Exception:
+        pass
     shutil.rmtree(temp_profile_dir, ignore_errors=True)
+    print("[Clean exit] Chrome closed and temporary profiles cleared.")
