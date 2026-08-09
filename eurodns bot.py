@@ -21,11 +21,12 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import (
     NoSuchElementException, 
     TimeoutException, 
-    StaleElementReferenceException
+    StaleElementReferenceException,
+    SessionNotCreatedException
 )
 
 def get_chrome_major_version():
-    """Detects installed Chrome major version."""
+    """Detects installed Google Chrome major version via shell commands."""
     for cmd in ["google-chrome --version", "google-chrome-stable --version", "chromium-browser --version", "chromium --version"]:
         try:
             output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode('utf-8')
@@ -37,7 +38,7 @@ def get_chrome_major_version():
     return None
 
 def build_chrome_options(profile_dir):
-    """Generates a fresh ChromeOptions object per launch attempt."""
+    """Generates an isolated ChromeOptions object per launch attempt."""
     opts = uc.ChromeOptions()
     opts.add_argument(f"--user-data-dir={profile_dir}")
     opts.add_argument("--no-sandbox")
@@ -47,7 +48,7 @@ def build_chrome_options(profile_dir):
     return opts
 
 def safe_js_click(driver, by_type, selector, timeout=12):
-    """Retries element lookup dynamically to bypass StaleElementReferenceException."""
+    """Dynamic retry click helper resilient to Angular re-renders and stale elements."""
     end_time = time.time() + timeout
     while time.time() < end_time:
         try:
@@ -55,10 +56,20 @@ def safe_js_click(driver, by_type, selector, timeout=12):
             driver.execute_script("arguments[0].click();", elem)
             return True
         except (NoSuchElementException, StaleElementReferenceException):
-            time.sleep(0.5)
+            time.sleep(0.4)
         except Exception:
-            time.sleep(0.5)
+            time.sleep(0.4)
     return False
+
+def switch_to_latest_tab(driver):
+    """Switches driver context if EuroDNS opens registration in a new window/tab."""
+    try:
+        handles = driver.window_handles
+        if len(handles) > 1:
+            driver.switch_to.window(handles[-1])
+            print("      [Tab Control] Switched to newly opened browser tab.")
+    except Exception as e:
+        print(f"      Tab switch note: {e}")
 
 print("[Init] Loading YOLOv8s vision model...")
 model = YOLO("yolov8s.pt")
@@ -107,7 +118,7 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
                             click_indices.add(tile_idx)
                             print(f"      [Canvas Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
 
-    # Pass 2: Individual Crop Detection
+    # Pass 2: Individual Tile Crop Detection
     for r in range(rows):
         for c in range(cols):
             tile_idx = r * cols + c
@@ -296,12 +307,12 @@ def generate_strong_password(length=16):
 temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
 installed_chrome_version = get_chrome_major_version()
 
-# Purge undetected_chromedriver cache directory to prevent driver mismatch lock-outs
+# Purge undetected_chromedriver cache directory to clear stale binary locks
 uc_cache = os.path.expanduser("~/.local/share/undetected_chromedriver")
 shutil.rmtree(uc_cache, ignore_errors=True)
 
 driver = None
-version_candidates = [installed_chrome_version, 150] if installed_chrome_version else [150, None]
+version_candidates = [installed_chrome_version, 150, 151, None]
 
 for ver in version_candidates:
     try:
@@ -343,24 +354,32 @@ try:
 
     print("[2/6] Clicking 'My account'...")
     safe_js_click(driver, By.ID, "account-item-logout", timeout=10)
+    time.sleep(1.5)
 
     print("[3/6] Clicking 'New account'...")
     safe_js_click(driver, By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']", timeout=12)
     time.sleep(2.5)
+
+    # Context switch check if EuroDNS loaded the form in a new tab
+    switch_to_latest_tab(driver)
 
     email, _ = create_real_temp_email()
     pwd = generate_strong_password(16)
     print(f"      Generated Email:    {email}")
 
     print("[4/6] Filling email & password fields...")
-    email_field = WebDriverWait(driver, 15).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[id*='email']"))
+    # Resilient XPath queries matching any variations of EuroDNS form input attributes
+    email_xpath = "//input[@type='email' or @name='email' or contains(@id, 'email') or contains(@placeholder, 'email')]"
+    password_xpath = "//input[@type='password' or @name='password' or contains(@id, 'password') or contains(@placeholder, 'password')]"
+
+    email_field = WebDriverWait(driver, 20).until(
+        EC.presence_of_element_located((By.XPATH, email_xpath))
     )
     email_field.clear()
     email_field.send_keys(email)
 
-    password_field = WebDriverWait(driver, 15).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'], input[name='password'], input[id*='password']"))
+    password_field = WebDriverWait(driver, 20).until(
+        EC.presence_of_element_located((By.XPATH, password_xpath))
     )
     password_field.clear()
     password_field.send_keys(pwd)
@@ -378,7 +397,7 @@ try:
     # Execute CAPTCHA solver
     solve_recaptcha_v2(driver, max_attempts=3)
 
-    # Post-CAPTCHA form submission
+    # Form submission
     print("\n[Form Submission] Triggering final EuroDNS registration submit button...")
     try:
         remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
