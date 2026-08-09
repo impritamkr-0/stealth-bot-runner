@@ -237,7 +237,6 @@ def solve_recaptcha_v2(driver, max_attempts=3):
                     except Exception:
                         break
 
-        # Explicitly Click Verify Button Inside Frame
         try:
             verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
             driver.execute_script("arguments[0].click();", verify_btn)
@@ -308,51 +307,57 @@ stealth(
 try:
     print("[1/6] Visiting EuroDNS...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
-    time.sleep(1.0)
+    time.sleep(2.0)
 
     try:
-        accept_cookies = WebDriverWait(driver, 3).until(
+        accept_cookies = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.ID, "cookiescript_accept"))
         )
         driver.execute_script("arguments[0].click();", accept_cookies)
     except Exception:
         pass
 
-    my_account_btn = WebDriverWait(driver, 4).until(
+    print("[2/6] Clicking 'My account'...")
+    my_account_btn = WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.ID, "account-item-logout"))
     )
     driver.execute_script("arguments[0].click();", my_account_btn)
 
-    new_account_btn = WebDriverWait(driver, 4).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']"))
+    print("[3/6] Clicking 'New account'...")
+    new_account_btn = WebDriverWait(driver, 12).until(
+        EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']"))
     )
     driver.execute_script("arguments[0].click();", new_account_btn)
+    time.sleep(2.5)
 
     email, _ = create_real_temp_email()
     pwd = generate_strong_password(16)
     print(f"      Generated Email:    {email}")
 
-    email_field = WebDriverWait(driver, 5).until(
+    print("[4/6] Filling email & password fields...")
+    email_field = WebDriverWait(driver, 15).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[id*='email']"))
     )
     email_field.clear()
     email_field.send_keys(email)
 
-    password_field = WebDriverWait(driver, 4).until(
+    password_field = WebDriverWait(driver, 15).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'], input[name='password'], input[id*='password']"))
     )
     password_field.clear()
     password_field.send_keys(pwd)
 
+    print("[5/6] Subscribing to newsletter...")
     try:
-        checkbox = WebDriverWait(driver, 3).until(
+        checkbox = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.ID, "subscribe-newsletter-checkbox-input"))
         )
         driver.execute_script("arguments[0].click();", checkbox)
     except Exception:
         pass
 
-    create_account_target = WebDriverWait(driver, 4).until(
+    print("[6/6] Triggering reCAPTCHA popup...")
+    create_account_target = WebDriverWait(driver, 8).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']"))
     )
     driver.execute_script("""
@@ -360,12 +365,12 @@ try:
         var button = target.tagName === 'BUTTON' ? target : target.closest('button');
         if (button) { button.click(); } else { target.click(); }
     """, create_account_target)
-    time.sleep(1.5)
+    time.sleep(2.0)
 
     # Execute CAPTCHA solver
     solve_recaptcha_v2(driver, max_attempts=3)
 
-    # ALWAYS attempt post-CAPTCHA form submission regardless of reCAPTCHA internal check
+    # Post-CAPTCHA form submission
     print("\n[Form Submission] Triggering final EuroDNS registration submit button...")
     try:
         remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
