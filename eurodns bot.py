@@ -138,8 +138,8 @@ def is_recaptcha_solved(driver):
             pass
         return False
 
-# CAPPED AT EXACTLY 1 ROUND FOR MAXIMUM SPEED
-def solve_recaptcha_v2(driver, max_attempts=1):
+# CAPPED AT MAXIMUM 3 ROUNDS
+def solve_recaptcha_v2(driver, max_attempts=3):
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
             print("      [reCAPTCHA] Green checkmark verified!")
@@ -208,7 +208,7 @@ def solve_recaptcha_v2(driver, max_attempts=1):
             time.sleep(0.3)
 
         else:
-            max_dynamic_rounds = 2
+            max_dynamic_rounds = 3
             total_clicks = 0
 
             for d_round in range(max_dynamic_rounds):
@@ -361,8 +361,8 @@ try:
     """, create_account_target)
     time.sleep(1.5)
 
-    # Solve CAPTCHA (1 Round Capped)
-    solve_recaptcha_v2(driver, max_attempts=1)
+    # Solve CAPTCHA (Capped at 3 Rounds)
+    solve_recaptcha_v2(driver, max_attempts=3)
 
     # Trigger final submit
     try:
