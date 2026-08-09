@@ -296,19 +296,28 @@ def generate_strong_password(length=16):
 temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
 installed_chrome_version = get_chrome_major_version()
 
+# Purge undetected_chromedriver cache directory to prevent driver mismatch lock-outs
+uc_cache = os.path.expanduser("~/.local/share/undetected_chromedriver")
+shutil.rmtree(uc_cache, ignore_errors=True)
+
 driver = None
-version_candidates = [installed_chrome_version, 150, 151, None]
+version_candidates = [installed_chrome_version, 150] if installed_chrome_version else [150, None]
 
 for ver in version_candidates:
     try:
+        shutil.rmtree(uc_cache, ignore_errors=True)
         fresh_options = build_chrome_options(temp_profile_dir)
-        driver = uc.Chrome(options=fresh_options, version_main=ver)
+        if ver:
+            driver = uc.Chrome(options=fresh_options, version_main=ver)
+        else:
+            driver = uc.Chrome(options=fresh_options)
         print(f"[Init] Driver initialized using version_main={ver}")
         break
     except Exception as e:
         print(f"[Init] Launch attempt failed for version {ver}: {e}")
 
 if not driver:
+    shutil.rmtree(uc_cache, ignore_errors=True)
     fresh_options = build_chrome_options(temp_profile_dir)
     driver = uc.Chrome(options=fresh_options)
 
