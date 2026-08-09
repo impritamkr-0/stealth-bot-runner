@@ -18,7 +18,11 @@ from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import (
+    NoSuchElementException, 
+    TimeoutException, 
+    StaleElementReferenceException
+)
 
 def get_chrome_major_version():
     """Detects installed Chrome major version."""
@@ -41,6 +45,20 @@ def build_chrome_options(profile_dir):
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     return opts
+
+def safe_js_click(driver, by_type, selector, timeout=12):
+    """Retries element lookup dynamically to bypass StaleElementReferenceException."""
+    end_time = time.time() + timeout
+    while time.time() < end_time:
+        try:
+            elem = driver.find_element(by_type, selector)
+            driver.execute_script("arguments[0].click();", elem)
+            return True
+        except (NoSuchElementException, StaleElementReferenceException):
+            time.sleep(0.5)
+        except Exception:
+            time.sleep(0.5)
+    return False
 
 print("[Init] Loading YOLOv8s vision model...")
 model = YOLO("yolov8s.pt")
@@ -310,24 +328,15 @@ try:
     time.sleep(2.0)
 
     try:
-        accept_cookies = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.ID, "cookiescript_accept"))
-        )
-        driver.execute_script("arguments[0].click();", accept_cookies)
+        safe_js_click(driver, By.ID, "cookiescript_accept", timeout=5)
     except Exception:
         pass
 
     print("[2/6] Clicking 'My account'...")
-    my_account_btn = WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.ID, "account-item-logout"))
-    )
-    driver.execute_script("arguments[0].click();", my_account_btn)
+    safe_js_click(driver, By.ID, "account-item-logout", timeout=10)
 
     print("[3/6] Clicking 'New account'...")
-    new_account_btn = WebDriverWait(driver, 12).until(
-        EC.element_to_be_clickable((By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']"))
-    )
-    driver.execute_script("arguments[0].click();", new_account_btn)
+    safe_js_click(driver, By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']", timeout=12)
     time.sleep(2.5)
 
     email, _ = create_real_temp_email()
@@ -349,22 +358,12 @@ try:
 
     print("[5/6] Subscribing to newsletter...")
     try:
-        checkbox = WebDriverWait(driver, 5).until(
-            EC.presence_of_element_located((By.ID, "subscribe-newsletter-checkbox-input"))
-        )
-        driver.execute_script("arguments[0].click();", checkbox)
+        safe_js_click(driver, By.ID, "subscribe-newsletter-checkbox-input", timeout=5)
     except Exception:
         pass
 
     print("[6/6] Triggering reCAPTCHA popup...")
-    create_account_target = WebDriverWait(driver, 8).until(
-        EC.presence_of_element_located((By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']"))
-    )
-    driver.execute_script("""
-        var target = arguments[0];
-        var button = target.tagName === 'BUTTON' ? target : target.closest('button');
-        if (button) { button.click(); } else { target.click(); }
-    """, create_account_target)
+    safe_js_click(driver, By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']", timeout=8)
     time.sleep(2.0)
 
     # Execute CAPTCHA solver
