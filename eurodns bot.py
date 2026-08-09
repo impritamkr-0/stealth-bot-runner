@@ -90,39 +90,31 @@ def build_chrome_options(profile_dir):
 print("[Init] Loading YOLOv8s vision model...")
 model = YOLO(YOLO_MODEL_PATH)
 
-def detect_target_tiles_optimized(full_img, yolo_target, rows=3, cols=3):
+def detect_targets_in_tiles(tile_images, yolo_target):
     """
-    Optimized detection:
-    1. Crop each tile individually.
-    2. Run YOLO on the crop.
+    Processes each tile image individually to detect the target object.
+    Returns a list of tile indices that contain the target.
     """
-    w, h = full_img.size
-    tile_w, tile_h = w / cols, h / rows
-    click_indices = set()
-
-    for r in range(rows):
-        for c in range(cols):
-            tile_idx = r * cols + c
-            # Crop the specific tile
-            left = int(c * tile_w)
-            top = int(r * tile_h)
-            right = int((c + 1) * tile_w)
-            bottom = int((r + 1) * tile_h)
-            
-            tile_crop = full_img.crop((left, top, right, bottom))
-            
-            # Run YOLO on the crop with HIGHER confidence (0.35) to reduce false positives
-            results = model(tile_crop, verbose=False, conf=0.35, iou=0.7)
-            
-            for result in results:
-                for box in result.boxes:
-                    detected_class = model.names[int(box.cls[0])].lower()
-                    
-                    if detected_class == yolo_target:
-                        click_indices.add(tile_idx)
-                        break # Found in this tile, move to next
+    click_indices = []
     
-    return sorted(list(click_indices))
+    for idx, tile_img in enumerate(tile_images):
+        # Run YOLO on the individual tile
+        # conf=0.45 is stricter to reduce false positives
+        results = model(tile_img, verbose=False, conf=0.45, iou=0.7)
+        
+        for result in results:
+            for box in result.boxes:
+                detected_class = model.names[int(box.cls[0])].lower()
+                confidence = float(box.conf[0])
+                
+                # Optional: Debug logging
+                # print(f" [Tile {idx}] Detected: '{detected_class}' (Conf: {confidence:.2f})")
+                
+                if detected_class == yolo_target:
+                    click_indices.append(idx)
+                    break # Found in this tile, move to next
+    
+    return click_indices
 
 def reload_captcha(driver):
     print(" [Reloading Captcha]")
@@ -185,33 +177,27 @@ def solve_recaptcha_v2(driver):
             grid_count = len(tile_elements)
             rows, cols = (4, 4) if grid_count == 16 else (3, 3)
 
-            full_grid_imgs = []
+            # Download each tile image individually
+            tile_images = []
             for i in range(grid_count):
                 try:
                     img_elem = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')[i]
                     src = img_elem.get_attribute("src")
                     response = requests.get(src, timeout=5)
                     img = Image.open(io.BytesIO(response.content))
-                    full_grid_imgs.append(img)
+                    tile_images.append(img)
                 except Exception as e:
                     print(f" [Img Load Error]: {e}")
+                    # If one fails, maybe reload
                     break
             
-            if not full_grid_imgs:
+            if len(tile_images) != grid_count:
+                print(" [IMG LOAD INCOMPLETE] Reloading...")
                 reload_captcha(driver)
                 continue
 
-            sample_img = full_grid_imgs[0]
-            tile_w, tile_h = sample_img.size
-            
-            full_grid_img = Image.new('RGB', (tile_w * cols, tile_h * rows))
-            for r in range(rows):
-                for c in range(cols):
-                    idx = r * cols + c
-                    if idx < len(full_grid_imgs):
-                        full_grid_img.paste(full_grid_imgs[idx], (c * tile_w, r * tile_h))
-
-            tiles_to_click = detect_target_tiles_optimized(full_grid_img, yolo_target, rows, cols)
+            # Detect targets in tiles
+            tiles_to_click = detect_targets_in_tiles(tile_images, yolo_target)
 
             if not tiles_to_click:
                 print(" [NO TILES FOUND] Reloading...")
@@ -282,7 +268,6 @@ driver = None
 driver_error = None
 
 # Try to launch with the detected version, then fallback to -1, -2, etc.
-# This handles the case where Chrome is 150 but UC tries to grab 151
 for version_offset in range(0, 5):
     try_version = chrome_version - version_offset
     if try_version < 100:
@@ -291,7 +276,6 @@ for version_offset in range(0, 5):
     print(f"[Init] Attempting to launch ChromeDriver for Chrome version {try_version}")
     try:
         fresh_options = build_chrome_options(temp_profile_dir)
-        # version_main forces UC to download/use the specific major version
         driver = uc.Chrome(options=fresh_options, version_main=try_version)
         print(f"[Init] Success! Driver initialized using version {try_version}")
         driver_error = None
@@ -299,7 +283,6 @@ for version_offset in range(0, 5):
     except Exception as e:
         driver_error = e
         print(f"[Init] Failed for version {try_version}: {str(e)[:100]}...")
-        # Clean up failed driver instance if any
         try:
             driver.quit()
         except:
