@@ -21,7 +21,6 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 
 def get_chrome_major_version():
-    """Detects the installed Google Chrome major version on Linux/Windows."""
     try:
         cmd = "google-chrome --version || google-chrome-stable --version || chromium --version"
         output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode('utf-8')
@@ -76,7 +75,7 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
     tile_area = tile_w * tile_h
     click_indices = set()
 
-    # Pass 1: Full Canvas Detection (Fast single-inference pass)
+    # Pass 1: Full Canvas Detection
     results_full = model(full_img, verbose=False, conf=0.15)
     for result in results_full:
         for box in result.boxes:
@@ -102,7 +101,7 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
     if click_indices:
         return sorted(list(click_indices))
 
-    # Pass 2: Fallback Crop Pass (Executed only if Pass 1 yields 0 matches)
+    # Pass 2: Fallback Crop Pass
     for r in range(rows):
         for c in range(cols):
             tile_idx = r * cols + c
@@ -151,7 +150,7 @@ def is_recaptcha_solved(driver):
             pass
         return False
 
-def solve_recaptcha_v2(driver, max_attempts=6):
+def solve_recaptcha_v2(driver, max_attempts=8):
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
             print("      [reCAPTCHA] Green checkmark verified!")
@@ -222,6 +221,7 @@ def solve_recaptcha_v2(driver, max_attempts=6):
         else:
             max_dynamic_rounds = 4
             total_clicks = 0
+            previous_click_set = None
 
             for d_round in range(max_dynamic_rounds):
                 tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
@@ -233,6 +233,14 @@ def solve_recaptcha_v2(driver, max_attempts=6):
                 full_img = Image.open(io.BytesIO(img_bytes))
 
                 tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
+
+                # Stuck Loop Detection: If clicking the exact same single tile 3 times in a row, force reload
+                if tiles_to_click == previous_click_set and len(tiles_to_click) == 1 and d_round >= 2:
+                    print("      [Stuck Tile Detected] Challenge is looping on a single tile. Reloading...")
+                    reload_captcha(driver)
+                    break
+
+                previous_click_set = tiles_to_click
 
                 if not tiles_to_click:
                     if total_clicks == 0:
@@ -402,23 +410,29 @@ try:
     time.sleep(2.0)
 
     print("[7/7] Invoking reCAPTCHA solver...")
-    solve_recaptcha_v2(driver, max_attempts=6)
+    is_solved = solve_recaptcha_v2(driver, max_attempts=8)
 
-    try:
-        remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
-        for btn in remaining_btns:
-            if btn.is_displayed():
-                driver.execute_script("arguments[0].click();", btn)
-                break
-    except Exception as e:
-        print(f"      Post-CAPTCHA submission note: {e}")
+    # STRICT CHECK: Submit and print success ONLY if solve_recaptcha_v2 returned True
+    if is_solved:
+        print("\n[reCAPTCHA Verified] Submitting registration form...")
+        try:
+            remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
+            for btn in remaining_btns:
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    break
+        except Exception as e:
+            print(f"      Post-CAPTCHA submission note: {e}")
 
-    time.sleep(2.0)
+        time.sleep(3.0)
 
-    print("\n" + "="*50)
-    print("Registration Workflow Completed Successfully!")
-    print(f"Email used: {email}")
-    print("="*50 + "\n")
+        print("\n" + "="*50)
+        print("Registration Workflow Completed Successfully!")
+        print(f"Email used: {email}")
+        print("="*50 + "\n")
+    else:
+        print("\n[Error] reCAPTCHA challenge was not solved.")
+        raise RuntimeError("Registration aborted: reCAPTCHA verification failed.")
 
 finally:
     try:
