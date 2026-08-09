@@ -10,6 +10,7 @@ import tempfile
 import shutil
 import requests
 import subprocess
+import urllib.request  # FIXED: Added urllib import
 from PIL import Image
 from ultralytics import YOLO
 import undetected_chromedriver as uc
@@ -60,8 +61,8 @@ def build_chrome_options(profile_dir):
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_argument("--disable-extensions")
-    opts.add_argument("--disable-gpu") # Critical for GitHub Actions
-    opts.add_argument("--headless=new") # New headless mode is less detectable
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--headless=new")
     return opts
 
 print("[Init] Loading YOLOv8s vision model...")
@@ -266,6 +267,7 @@ def solve_recaptcha_v2(driver):
     return False
 
 def create_real_temp_email():
+    # FIXED: Added urllib import above
     req = urllib.request.Request("https://api.mail.tm/domains", headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req) as response:
         domains_data = json.loads(response.read().decode('utf-8'))
@@ -290,23 +292,33 @@ def generate_strong_password(length=16):
 
 # --- Main Execution ---
 temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
+
+# Get the installed Chrome version
 installed_chrome_version = get_chrome_major_version()
+print(f"[Init] Detected Chrome version: {installed_chrome_version}")
 
 driver = None
-version_candidates = [installed_chrome_version, 150, 151, None]
 
-for ver in version_candidates:
+# Try to launch with the detected version
+if installed_chrome_version:
     try:
         fresh_options = build_chrome_options(temp_profile_dir)
-        driver = uc.Chrome(options=fresh_options, version_main=ver)
-        print(f"[Init] Driver initialized using version_main={ver}")
-        break
+        driver = uc.Chrome(options=fresh_options, version_main=installed_chrome_version)
+        print(f"[Init] Driver initialized successfully using version {installed_chrome_version}")
     except Exception as e:
-        print(f"[Init] Launch attempt failed for version {ver}: {e}")
+        print(f"[Init] Launch attempt failed for version {installed_chrome_version}: {e}")
+
+# Fallback if detected version failed or wasn't found
+if not driver:
+    try:
+        fresh_options = build_chrome_options(temp_profile_dir)
+        driver = uc.Chrome(options=fresh_options)
+        print(f"[Init] Driver initialized using default version")
+    except Exception as e:
+        print(f"[Init] Default launch failed: {e}")
 
 if not driver:
-    fresh_options = build_chrome_options(temp_profile_dir)
-    driver = uc.Chrome(options=fresh_options)
+    raise Exception("Failed to initialize Chrome Driver")
 
 stealth(
     driver,
