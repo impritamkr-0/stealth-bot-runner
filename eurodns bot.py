@@ -67,7 +67,7 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
     click_indices = set()
 
     # Pass 1: Full Canvas Detection
-    results_full = model(full_img, verbose=False, conf=0.15)
+    results_full = model(full_img, verbose=False, conf=0.10)
     for result in results_full:
         for box in result.boxes:
             detected_class = model.names[int(box.cls[0])].lower()
@@ -84,22 +84,20 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
                         inter_h = max(0.0, min(by2, ty2) - max(by1, ty1))
                         inter_area = inter_w * inter_h
 
-                        if (inter_area / tile_area) >= 0.08:
+                        # 2% overlap threshold to capture edges/bumpers
+                        if (inter_area / tile_area) >= 0.02:
                             tile_idx = r * cols + c
                             click_indices.add(tile_idx)
                             print(f"      [Canvas Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
 
-    if click_indices:
-        return sorted(list(click_indices))
-
-    # Pass 2: Fallback Crop Pass
+    # Pass 2: Individual Tile Crop Detection (Merged with Canvas Pass)
     for r in range(rows):
         for c in range(cols):
             tile_idx = r * cols + c
             box = (int(c * tile_w), int(r * tile_h), int((c + 1) * tile_w), int((r + 1) * tile_h))
             tile_crop = full_img.crop(box)
 
-            tile_results = model(tile_crop, verbose=False, conf=0.12)
+            tile_results = model(tile_crop, verbose=False, conf=0.10)
             for result in tile_results:
                 for box in result.boxes:
                     detected_class = model.names[int(box.cls[0])].lower()
