@@ -138,7 +138,6 @@ def is_recaptcha_solved(driver):
             pass
         return False
 
-# CAPPED AT MAXIMUM 3 ROUNDS
 def solve_recaptcha_v2(driver, max_attempts=3):
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
@@ -238,17 +237,19 @@ def solve_recaptcha_v2(driver, max_attempts=3):
                     except Exception:
                         break
 
+        # Explicitly Click Verify Button Inside Frame
         try:
             verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
             driver.execute_script("arguments[0].click();", verify_btn)
-        except Exception:
-            pass
+            print("      [Verify Clicked]")
+        except Exception as e:
+            print(f"      Verify click note: {e}")
 
         try:
             driver.switch_to.default_content()
         except Exception:
             pass
-        time.sleep(1.0)
+        time.sleep(1.5)
 
     return is_recaptcha_solved(driver)
 
@@ -361,34 +362,44 @@ try:
     """, create_account_target)
     time.sleep(1.5)
 
-    # Solve CAPTCHA (Capped at 3 Rounds)
-    solve_recaptcha_v2(driver, max_attempts=3)
+    # Solve CAPTCHA
+    is_solved = solve_recaptcha_v2(driver, max_attempts=3)
 
-    # Trigger final submit
-    try:
-        remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
-        for btn in remaining_btns:
-            if btn.is_displayed():
-                driver.execute_script("arguments[0].click();", btn)
+    if is_solved:
+        print("\n[reCAPTCHA Checkmark Verified] Submitting EuroDNS registration form...")
+        try:
+            remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
+            for btn in remaining_btns:
+                if btn.is_displayed():
+                    driver.execute_script("arguments[0].click();", btn)
+                    break
+        except Exception as e:
+            print(f"      Post-CAPTCHA submit note: {e}")
+
+        # Poll current URL for up to 10 seconds waiting for dashboard redirect
+        redirected = False
+        for _ in range(10):
+            time.sleep(1.0)
+            current_url = driver.current_url
+            if "createNewAccount" not in current_url:
+                redirected = True
+                print(f"      Redirected to: {current_url}")
                 break
-    except Exception:
-        pass
 
-    # Wait 12 seconds for registration processing and redirect
-    print("\nWaiting 12 seconds for account creation and redirect...")
-    time.sleep(12.0)
+        final_url = driver.current_url
+        print(f"\nFinal Landed URL: {final_url}")
 
-    # Fetch and log current landed URL
-    try:
-        landed_url = driver.current_url
-        print(f"Landed URL: {landed_url}")
-    except Exception as e:
-        print(f"Landed URL retrieval note: {e}")
-
-    print("\n" + "="*50)
-    print("Registration Workflow Completed Successfully!")
-    print(f"Email used: {email}")
-    print("="*50 + "\n")
+        if "createNewAccount" not in final_url or redirected:
+            print("\n" + "="*50)
+            print("Registration Workflow Completed Successfully!")
+            print(f"Email used: {email}")
+            print("="*50 + "\n")
+        else:
+            print("\n[Error] Form submission did not navigate away from registration page.")
+            raise RuntimeError("Registration failed: Account summary page was not reached.")
+    else:
+        print("\n[Error] reCAPTCHA was not verified.")
+        raise RuntimeError("Registration aborted: reCAPTCHA verification failed.")
 
 finally:
     try:
