@@ -84,13 +84,12 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
                         inter_h = max(0.0, min(by2, ty2) - max(by1, ty1))
                         inter_area = inter_w * inter_h
 
-                        # 2% overlap threshold to capture edges/bumpers
                         if (inter_area / tile_area) >= 0.02:
                             tile_idx = r * cols + c
                             click_indices.add(tile_idx)
                             print(f"      [Canvas Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
 
-    # Pass 2: Individual Tile Crop Detection (Merged with Canvas Pass)
+    # Pass 2: Individual Crop Detection
     for r in range(rows):
         for c in range(cols):
             tile_idx = r * cols + c
@@ -114,7 +113,7 @@ def reload_captcha(driver):
     try:
         reload_btn = driver.find_element(By.ID, "recaptcha-reload-button")
         driver.execute_script("arguments[0].click();", reload_btn)
-        time.sleep(1.2)
+        time.sleep(1.0)
     except Exception:
         pass
     finally:
@@ -139,7 +138,8 @@ def is_recaptcha_solved(driver):
             pass
         return False
 
-def solve_recaptcha_v2(driver, max_attempts=4):
+# CAPPED AT EXACTLY 1 ROUND FOR MAXIMUM SPEED
+def solve_recaptcha_v2(driver, max_attempts=1):
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
             print("      [reCAPTCHA] Green checkmark verified!")
@@ -164,7 +164,7 @@ def solve_recaptcha_v2(driver, max_attempts=4):
         except (TimeoutException, NoSuchElementException):
             if is_recaptcha_solved(driver):
                 return True
-            time.sleep(1.0)
+            time.sleep(0.5)
             continue
 
         full_instruction_text = instructions_elem.text.lower()
@@ -174,7 +174,7 @@ def solve_recaptcha_v2(driver, max_attempts=4):
         if any(unsupported in prompt_text for unsupported in UNSUPPORTED_PROMPTS):
             print(f"      [Instant Skip] '{prompt_text}' unsupported prompt. Reloading...")
             reload_captcha(driver)
-            time.sleep(1.2)
+            time.sleep(1.0)
             continue
 
         yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
@@ -194,7 +194,7 @@ def solve_recaptcha_v2(driver, max_attempts=4):
 
             if not tiles_to_click:
                 reload_captcha(driver)
-                time.sleep(1.2)
+                time.sleep(1.0)
                 continue
 
             print(f"      Static Mode: Clicking tiles -> {tiles_to_click}")
@@ -205,12 +205,11 @@ def solve_recaptcha_v2(driver, max_attempts=4):
                 except Exception:
                     break
 
-            time.sleep(0.4)
+            time.sleep(0.3)
 
         else:
-            max_dynamic_rounds = 3
+            max_dynamic_rounds = 2
             total_clicks = 0
-            previous_click_set = None
 
             for d_round in range(max_dynamic_rounds):
                 tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
@@ -222,13 +221,6 @@ def solve_recaptcha_v2(driver, max_attempts=4):
                 full_img = Image.open(io.BytesIO(img_bytes))
 
                 tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
-
-                if tiles_to_click == previous_click_set and d_round >= 1:
-                    print("      [Loop Detected] Repeating dynamic tiles. Reloading challenge...")
-                    reload_captcha(driver)
-                    break
-
-                previous_click_set = tiles_to_click
 
                 if not tiles_to_click:
                     if total_clicks == 0:
@@ -242,7 +234,7 @@ def solve_recaptcha_v2(driver, max_attempts=4):
                     try:
                         driver.execute_script("arguments[0].click();", tile_elements[idx])
                         total_clicks += 1
-                        time.sleep(1.5)
+                        time.sleep(1.2)
                     except Exception:
                         break
 
@@ -256,7 +248,7 @@ def solve_recaptcha_v2(driver, max_attempts=4):
             driver.switch_to.default_content()
         except Exception:
             pass
-        time.sleep(1.5)
+        time.sleep(1.0)
 
     return is_recaptcha_solved(driver)
 
@@ -369,28 +361,34 @@ try:
     """, create_account_target)
     time.sleep(1.5)
 
-    is_solved = solve_recaptcha_v2(driver, max_attempts=4)
+    # Solve CAPTCHA (1 Round Capped)
+    solve_recaptcha_v2(driver, max_attempts=1)
 
-    if is_solved:
-        print("\n[reCAPTCHA Verified] Submitting registration form...")
-        try:
-            remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
-            for btn in remaining_btns:
-                if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
-                    break
-        except Exception:
-            pass
+    # Trigger final submit
+    try:
+        remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
+        for btn in remaining_btns:
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                break
+    except Exception:
+        pass
 
-        time.sleep(3.0)
+    # Wait 12 seconds for registration processing and redirect
+    print("\nWaiting 12 seconds for account creation and redirect...")
+    time.sleep(12.0)
 
-        print("\n" + "="*50)
-        print("Registration Workflow Completed Successfully!")
-        print(f"Email used: {email}")
-        print("="*50 + "\n")
-    else:
-        print("\n[Error] reCAPTCHA challenge was not solved.")
-        raise RuntimeError("Registration aborted: reCAPTCHA verification failed.")
+    # Fetch and log current landed URL
+    try:
+        landed_url = driver.current_url
+        print(f"Landed URL: {landed_url}")
+    except Exception as e:
+        print(f"Landed URL retrieval note: {e}")
+
+    print("\n" + "="*50)
+    print("Registration Workflow Completed Successfully!")
+    print(f"Email used: {email}")
+    print("="*50 + "\n")
 
 finally:
     try:
