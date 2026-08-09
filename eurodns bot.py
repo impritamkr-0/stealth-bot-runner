@@ -10,7 +10,7 @@ import tempfile
 import shutil
 import requests
 import subprocess
-import urllib.request  # FIXED: Added urllib import
+import urllib.request
 from PIL import Image
 from ultralytics import YOLO
 import undetected_chromedriver as uc
@@ -41,16 +41,35 @@ UNSUPPORTED_PROMPTS = [
 ]
 
 def get_chrome_major_version():
-    """Detects installed Chrome major version."""
-    for cmd in ["google-chrome --version", "google-chrome-stable --version", "chromium-browser --version", "chromium --version"]:
+    """Detects installed Chrome major version robustly."""
+    # Try multiple commands to find Chrome
+    chrome_cmds = [
+        ["google-chrome-stable", "--version"],
+        ["google-chrome", "--version"],
+        ["chromium-browser", "--version"],
+        ["chromium", "--version"]
+    ]
+    
+    for cmd in chrome_cmds:
         try:
-            output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STOUT).decode('utf-8')
-            match = re.search(r"(\d+)\.\d+\.\d+\.\d+", output)
+            # Use subprocess.run for better control
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            output = result.stdout.strip()
+            if not output:
+                # Some versions output to stderr
+                output = result.stderr.strip()
+            
+            # Parse version string: "Google Chrome 150.0.7871.0" or just "150.0.7871.0"
+            match = re.search(r'(\d+)\.\d+\.\d+\.\d+', output)
             if match:
-                return int(match.group(1))
-        except Exception:
-            pass
-    return None
+                version = int(match.group(1))
+                print(f"[Init] Found Chrome version: {version}")
+                return version
+        except Exception as e:
+            continue
+            
+    print("[Init] Chrome version detection failed, defaulting to 150")
+    return 150 # Fallback to common GA version
 
 def build_chrome_options(profile_dir):
     """Generates a fresh ChromeOptions object per launch attempt."""
@@ -63,6 +82,8 @@ def build_chrome_options(profile_dir):
     opts.add_argument("--disable-extensions")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--headless=new")
+    opts.add_argument("--lang=en-US")
+    opts.add_argument("--timezone=America/New_York")
     return opts
 
 print("[Init] Loading YOLOv8s vision model...")
@@ -111,7 +132,6 @@ def detect_target_tiles_optimized(full_img, yolo_target, rows=3, cols=3):
                     detected_class = model.names[int(box.cls[0])].lower()
                     if detected_class == yolo_target:
                         click_indices.add(tile_idx)
-                        # print(f" [Tile {tile_idx}] Found '{detected_class}'")
                         break # Found in this tile, move to next
     
     return sorted(list(click_indices))
@@ -184,15 +204,10 @@ def solve_recaptcha_v2(driver):
             grid_count = len(tile_elements)
             rows, cols = (4, 4) if grid_count == 16 else (3, 3)
 
-            # Get the first image to determine full grid size (they are usually concatenated in one src or separate)
-            # ReCaptcha V2 usually loads individual images. We need to find the FIRST img tag to get the base URL pattern
+            # Get the first image to determine full grid size
             first_img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
-            img_src = first_img_elem.get_attribute("src")
             
-            # Download the full grid image (ReCaptcha often serves individual tiles, but sometimes a single image)
-            # Actually, ReCaptcha V2 serves individual images for each tile. 
-            # We will construct a full grid image by downloading all tiles.
-            
+            # Download the full grid image (ReCaptcha V2 serves individual tiles)
             full_grid_imgs = []
             for i in range(grid_count):
                 try:
@@ -209,9 +224,7 @@ def solve_recaptcha_v2(driver):
                 reload_captcha(driver)
                 continue
 
-            # Create a composite image for easier processing if needed, 
-            # but our optimized function works on individual crops.
-            # We need to know the size of one tile to create a virtual grid.
+            # Create a composite image for easier processing
             sample_img = full_grid_imgs[0]
             tile_w, tile_h = sample_img.size
             
@@ -267,7 +280,6 @@ def solve_recaptcha_v2(driver):
     return False
 
 def create_real_temp_email():
-    # FIXED: Added urllib import above
     req = urllib.request.Request("https://api.mail.tm/domains", headers={'User-Agent': 'Mozilla/5.0'})
     with urllib.request.urlopen(req) as response:
         domains_data = json.loads(response.read().decode('utf-8'))
@@ -294,28 +306,25 @@ def generate_strong_password(length=16):
 temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
 
 # Get the installed Chrome version
-installed_chrome_version = get_chrome_major_version()
-print(f"[Init] Detected Chrome version: {installed_chrome_version}")
+chrome_version = get_chrome_major_version()
 
 driver = None
 
 # Try to launch with the detected version
-if installed_chrome_version:
-    try:
-        fresh_options = build_chrome_options(temp_profile_dir)
-        driver = uc.Chrome(options=fresh_options, version_main=installed_chrome_version)
-        print(f"[Init] Driver initialized successfully using version {installed_chrome_version}")
-    except Exception as e:
-        print(f"[Init] Launch attempt failed for version {installed_chrome_version}: {e}")
-
-# Fallback if detected version failed or wasn't found
-if not driver:
+try:
+    fresh_options = build_chrome_options(temp_profile_dir)
+    # Force the version_main to match the installed Chrome
+    driver = uc.Chrome(options=fresh_options, version_main=chrome_version)
+    print(f"[Init] Driver initialized successfully using version {chrome_version}")
+except Exception as e:
+    print(f"[Init] Launch attempt failed for version {chrome_version}: {e}")
+    # Fallback: try without explicit version (might download wrong driver)
     try:
         fresh_options = build_chrome_options(temp_profile_dir)
         driver = uc.Chrome(options=fresh_options)
-        print(f"[Init] Driver initialized using default version")
-    except Exception as e:
-        print(f"[Init] Default launch failed: {e}")
+        print(f"[Init] Driver initialized using default version (fallback)")
+    except Exception as e2:
+        print(f"[Init] Default launch failed: {e2}")
 
 if not driver:
     raise Exception("Failed to initialize Chrome Driver")
