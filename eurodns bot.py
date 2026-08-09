@@ -21,15 +21,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 
 def get_chrome_major_version():
+    """Detects the installed Google Chrome major version on Linux/Windows."""
     try:
-        output = subprocess.check_output(["google-chrome", "--version"]).decode('utf-8')
-        match = re.search(r"Google Chrome (\d+)\.", output)
+        cmd = "google-chrome --version || google-chrome-stable --version || chromium --version"
+        output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode('utf-8')
+        match = re.search(r"(\d+)\.\d+\.\d+\.\d+", output)
         if match:
             version = int(match.group(1))
-            print(f"[Init] Auto-detected Chrome version: {version}")
+            print(f"[Init] Detected Chrome major version: {version}")
             return version
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Init] Shell detection note: {e}")
 
     try:
         output = subprocess.check_output(
@@ -39,13 +41,13 @@ def get_chrome_major_version():
         match = re.search(r"Version=(\d+)\.", output)
         if match:
             version = int(match.group(1))
-            print(f"[Init] Auto-detected Chrome version: {version}")
+            print(f"[Init] Detected Chrome major version: {version}")
             return version
     except Exception:
         pass
 
-    print("[Init] Defaulting version matching...")
-    return None
+    print("[Init] Fallback: Defaulting to version 150...")
+    return 150
 
 print("[Init] Loading YOLOv8s vision model...")
 model = YOLO("yolov8s.pt")
@@ -97,11 +99,10 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
                             click_indices.add(tile_idx)
                             print(f"      [Canvas Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
 
-    # Fast Return: Skip crop pass if full canvas already found tiles
     if click_indices:
         return sorted(list(click_indices))
 
-    # Pass 2: Fallback Crop Pass (Only executed if Pass 1 yielded 0 matches)
+    # Pass 2: Fallback Crop Pass (Executed only if Pass 1 yields 0 matches)
     for r in range(rows):
         for c in range(cols):
             tile_idx = r * cols + c
@@ -317,7 +318,10 @@ options.add_argument("--window-size=1920,1080")
 options.add_argument("--disable-blink-features=AutomationControlled")
 
 installed_chrome_version = get_chrome_major_version()
-driver = uc.Chrome(options=options, version_main=installed_chrome_version)
+driver = uc.Chrome(
+    options=options, 
+    version_main=installed_chrome_version if installed_chrome_version else 150
+)
 
 stealth(
     driver,
