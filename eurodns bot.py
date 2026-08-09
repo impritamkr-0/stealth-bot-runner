@@ -18,7 +18,7 @@ from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 
 def get_chrome_major_version():
     try:
@@ -26,7 +26,7 @@ def get_chrome_major_version():
         match = re.search(r"Google Chrome (\d+)\.", output)
         if match:
             version = int(match.group(1))
-            print(f"[Init] Auto-detected installed Chrome version: {version}")
+            print(f"[Init] Auto-detected Chrome version: {version}")
             return version
     except Exception:
         pass
@@ -39,7 +39,7 @@ def get_chrome_major_version():
         match = re.search(r"Version=(\d+)\.", output)
         if match:
             version = int(match.group(1))
-            print(f"[Init] Auto-detected installed Chrome version: {version}")
+            print(f"[Init] Auto-detected Chrome version: {version}")
             return version
     except Exception:
         pass
@@ -66,7 +66,7 @@ UNSUPPORTED_PROMPTS = [
 ]
 
 # -------------------------------------------------------------
-# 1. Vision Solver Core Functions
+# 1. High-Speed Vision Solver Core Functions
 # -------------------------------------------------------------
 def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
     w, h = full_img.size
@@ -74,6 +74,7 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
     tile_area = tile_w * tile_h
     click_indices = set()
 
+    # Pass 1: Full Canvas Detection (Fast single-inference pass)
     results_full = model(full_img, verbose=False, conf=0.15)
     for result in results_full:
         for box in result.boxes:
@@ -96,6 +97,11 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
                             click_indices.add(tile_idx)
                             print(f"      [Canvas Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
 
+    # Fast Return: Skip crop pass if full canvas already found tiles
+    if click_indices:
+        return sorted(list(click_indices))
+
+    # Pass 2: Fallback Crop Pass (Only executed if Pass 1 yielded 0 matches)
     for r in range(rows):
         for c in range(cols):
             tile_idx = r * cols + c
@@ -119,7 +125,7 @@ def reload_captcha(driver):
     try:
         reload_btn = driver.find_element(By.ID, "recaptcha-reload-button")
         driver.execute_script("arguments[0].click();", reload_btn)
-        time.sleep(2.5)
+        time.sleep(1.5)
     except Exception as e:
         print(f"      Reload button interaction note: {e}")
     finally:
@@ -144,7 +150,7 @@ def is_recaptcha_solved(driver):
             pass
         return False
 
-def solve_recaptcha_v2(driver, max_attempts=8):
+def solve_recaptcha_v2(driver, max_attempts=6):
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
             print("      [reCAPTCHA] Green checkmark verified!")
@@ -158,18 +164,18 @@ def solve_recaptcha_v2(driver, max_attempts=8):
         print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
 
         try:
-            bframe = WebDriverWait(driver, 5).until(
+            bframe = WebDriverWait(driver, 4).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
             )
             driver.switch_to.frame(bframe)
 
-            instructions_elem = WebDriverWait(driver, 5).until(
+            instructions_elem = WebDriverWait(driver, 4).until(
                 EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
             )
         except (TimeoutException, NoSuchElementException):
             if is_recaptcha_solved(driver):
                 return True
-            time.sleep(1.5)
+            time.sleep(1.0)
             continue
 
         full_instruction_text = instructions_elem.text.lower()
@@ -179,7 +185,7 @@ def solve_recaptcha_v2(driver, max_attempts=8):
         if any(unsupported in prompt_text for unsupported in UNSUPPORTED_PROMPTS):
             print(f"      [Instant Skip] '{prompt_text}' is not in standard YOLO COCO dataset. Reloading...")
             reload_captcha(driver)
-            time.sleep(2.0)
+            time.sleep(1.5)
             continue
 
         yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
@@ -199,18 +205,21 @@ def solve_recaptcha_v2(driver, max_attempts=8):
 
             if not tiles_to_click:
                 reload_captcha(driver)
-                time.sleep(2.0)
+                time.sleep(1.5)
                 continue
 
             print(f"      Static Mode: Clicking tiles -> {tiles_to_click}")
             for idx in tiles_to_click:
-                driver.execute_script("arguments[0].click();", tile_elements[idx])
-                time.sleep(0.3)
+                try:
+                    driver.execute_script("arguments[0].click();", tile_elements[idx])
+                    time.sleep(0.15)
+                except (NoSuchElementException, StaleElementReferenceException):
+                    break
 
-            time.sleep(1.0)
+            time.sleep(0.5)
 
         else:
-            max_dynamic_rounds = 5
+            max_dynamic_rounds = 4
             total_clicks = 0
 
             for d_round in range(max_dynamic_rounds):
@@ -234,9 +243,12 @@ def solve_recaptcha_v2(driver, max_attempts=8):
 
                 print(f"      Dynamic Sub-Round {d_round + 1}: Clicking -> {tiles_to_click}")
                 for idx in tiles_to_click:
-                    driver.execute_script("arguments[0].click();", tile_elements[idx])
-                    total_clicks += 1
-                    time.sleep(2.5)
+                    try:
+                        driver.execute_script("arguments[0].click();", tile_elements[idx])
+                        total_clicks += 1
+                        time.sleep(1.8)
+                    except (NoSuchElementException, StaleElementReferenceException):
+                        break
 
         try:
             verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
@@ -248,7 +260,7 @@ def solve_recaptcha_v2(driver, max_attempts=8):
             driver.switch_to.default_content()
         except Exception:
             pass
-        time.sleep(2.5)
+        time.sleep(1.5)
 
     return is_recaptcha_solved(driver)
 
@@ -320,10 +332,10 @@ stealth(
 try:
     print("[1/6] Visiting EuroDNS...")
     driver.get("https://eurodns.pxf.io/PzkDy6")
-    time.sleep(2)
+    time.sleep(1.5)
 
     try:
-        accept_cookies = WebDriverWait(driver, 10).until(
+        accept_cookies = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.ID, "cookiescript_accept"))
         )
         driver.execute_script("arguments[0].click();", accept_cookies)
@@ -331,57 +343,51 @@ try:
     except Exception as e:
         print(f"      Cookie banner note: {e}")
 
-    delay_2 = random.uniform(2.0, 5.0)
-    print(f"[2/6] Pausing {delay_2:.2f}s, then clicking 'My account'...")
-    time.sleep(delay_2)
+    time.sleep(1.0)
+    print("[2/6] Clicking 'My account'...")
 
-    my_account_btn = WebDriverWait(driver, 10).until(
+    my_account_btn = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.ID, "account-item-logout"))
     )
     driver.execute_script("arguments[0].click();", my_account_btn)
 
     print("[3/6] Clicking 'New account' button...")
-    new_account_btn = WebDriverWait(driver, 10).until(
+    new_account_btn = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']"))
     )
     driver.execute_script("arguments[0].click();", new_account_btn)
 
-    delay_4 = random.uniform(2.0, 5.0)
-    print(f"[4/6] Pausing {delay_4:.2f}s for form load & generating credentials...")
-    time.sleep(delay_4)
+    time.sleep(1.5)
+    print("[4/6] Filling credentials...")
 
     email, _ = create_real_temp_email()
     pwd = generate_strong_password(16)
     print(f"      Generated Email:    {email}")
     print(f"      Generated Password: {pwd}")
 
-    email_field = WebDriverWait(driver, 15).until(
+    email_field = WebDriverWait(driver, 10).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[id*='email']"))
     )
     email_field.clear()
-    for char in email:
-        email_field.send_keys(char)
-        time.sleep(0.01)
+    email_field.send_keys(email)
 
-    password_field = WebDriverWait(driver, 10).until(
+    password_field = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='password'], input[name='password'], input[id*='password']"))
     )
     password_field.clear()
-    for char in pwd:
-        password_field.send_keys(char)
-        time.sleep(0.01)
+    password_field.send_keys(pwd)
 
     print("[5/6] Checking newsletter checkbox...")
     try:
-        checkbox = WebDriverWait(driver, 10).until(
+        checkbox = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.ID, "subscribe-newsletter-checkbox-input"))
         )
         driver.execute_script("arguments[0].click();", checkbox)
     except Exception as e:
         print(f"      Checkbox note: {e}")
 
-    print("[6/6] Clicking 'Create Account' button to trigger CAPTCHA popup...")
-    create_account_target = WebDriverWait(driver, 10).until(
+    print("[6/6] Triggering CAPTCHA popup...")
+    create_account_target = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']"))
     )
     driver.execute_script("""
@@ -389,12 +395,11 @@ try:
         var button = target.tagName === 'BUTTON' ? target : target.closest('button');
         if (button) { button.click(); } else { target.click(); }
     """, create_account_target)
-    time.sleep(3)
+    time.sleep(2.0)
 
     print("[7/7] Invoking reCAPTCHA solver...")
-    solve_recaptcha_v2(driver, max_attempts=8)
+    solve_recaptcha_v2(driver, max_attempts=6)
 
-    # Post-CAPTCHA: Attempt final form submit safely if page hasn't redirected yet
     try:
         remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
         for btn in remaining_btns:
@@ -404,7 +409,7 @@ try:
     except Exception as e:
         print(f"      Post-CAPTCHA submission note: {e}")
 
-    time.sleep(5)
+    time.sleep(2.0)
 
     print("\n" + "="*50)
     print("Registration Workflow Completed Successfully!")
