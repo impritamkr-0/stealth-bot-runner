@@ -2,19 +2,28 @@ name: EuroDNS Registration Bot
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # Optional: runs automatically every 6 hours
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repo
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
+      # Step to route runner traffic through Cloudflare WARP
+      - name: Setup Cloudflare WARP IP Bypass
+        uses: fscarmen/warp-on-actions@main
+        with:
+          mode: client
+          stack: dual
 
       - name: Install System Dependencies
         run: |
@@ -28,4 +37,4 @@ jobs:
 
       - name: Run Bot in Virtual Display
         run: |
-          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python bot.py
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" python "eurodns bot.py"
