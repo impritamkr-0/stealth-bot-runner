@@ -21,16 +21,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
 
 def get_chrome_major_version():
-    try:
-        cmd = "google-chrome --version || google-chrome-stable --version || chromium --version"
-        output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode('utf-8')
-        match = re.search(r"(\d+)\.\d+\.\d+\.\d+", output)
-        if match:
-            version = int(match.group(1))
-            print(f"[Init] Detected Chrome major version: {version}")
-            return version
-    except Exception as e:
-        print(f"[Init] Shell detection note: {e}")
+    """Detects the exact installed Google Chrome major version."""
+    for cmd in ["google-chrome --version", "google-chrome-stable --version", "chromium-browser --version", "chromium --version"]:
+        try:
+            output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode('utf-8')
+            print(f"[Init] Executed '{cmd}': {output.strip()}")
+            match = re.search(r"(\d+)\.\d+\.\d+\.\d+", output)
+            if match:
+                version = int(match.group(1))
+                return version
+        except Exception:
+            pass
 
     try:
         output = subprocess.check_output(
@@ -39,14 +40,11 @@ def get_chrome_major_version():
         ).decode('utf-8')
         match = re.search(r"Version=(\d+)\.", output)
         if match:
-            version = int(match.group(1))
-            print(f"[Init] Detected Chrome major version: {version}")
-            return version
+            return int(match.group(1))
     except Exception:
         pass
 
-    print("[Init] Fallback: Defaulting to version 150...")
-    return 150
+    return None
 
 print("[Init] Loading YOLOv8s vision model...")
 model = YOLO("yolov8s.pt")
@@ -234,7 +232,6 @@ def solve_recaptcha_v2(driver, max_attempts=8):
 
                 tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
 
-                # Stuck Loop Detection: If clicking the exact same single tile 3 times in a row, force reload
                 if tiles_to_click == previous_click_set and len(tiles_to_click) == 1 and d_round >= 2:
                     print("      [Stuck Tile Detected] Challenge is looping on a single tile. Reloading...")
                     reload_captcha(driver)
@@ -326,10 +323,21 @@ options.add_argument("--window-size=1920,1080")
 options.add_argument("--disable-blink-features=AutomationControlled")
 
 installed_chrome_version = get_chrome_major_version()
-driver = uc.Chrome(
-    options=options, 
-    version_main=installed_chrome_version if installed_chrome_version else 150
-)
+
+# Resilient Driver Launch Retry Loop
+driver = None
+version_candidates = [installed_chrome_version, 150, 151, None]
+for ver in version_candidates:
+    try:
+        print(f"[Init] Launching Chrome driver with version_main={ver}...")
+        driver = uc.Chrome(options=options, version_main=ver)
+        print(f"[Init] Success! Chrome initialized using version_main={ver}")
+        break
+    except Exception as e:
+        print(f"[Init] Driver launch failed with version_main={ver}: {e}")
+
+if not driver:
+    raise RuntimeError("Failed to launch Chrome driver under all candidate versions.")
 
 stealth(
     driver,
@@ -412,7 +420,6 @@ try:
     print("[7/7] Invoking reCAPTCHA solver...")
     is_solved = solve_recaptcha_v2(driver, max_attempts=8)
 
-    # STRICT CHECK: Submit and print success ONLY if solve_recaptcha_v2 returned True
     if is_solved:
         print("\n[reCAPTCHA Verified] Submitting registration form...")
         try:
