@@ -14,6 +14,7 @@ import urllib.request
 from PIL import Image
 from ultralytics import YOLO
 import undetected_chromedriver as uc
+from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -288,9 +289,21 @@ options.add_argument(f"--user-data-dir={temp_profile_dir}")
 options.add_argument("--no-sandbox")
 options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--window-size=1920,1080")
+options.add_argument("--disable-blink-features=AutomationControlled")
 
 installed_chrome_version = get_chrome_major_version()
 driver = uc.Chrome(options=options, version_main=installed_chrome_version)
+
+# --- Apply Stealth Fingerprint Masking ---
+stealth(
+    driver,
+    languages=["en-US", "en"],
+    vendor="Google Inc.",
+    platform="Win32",
+    webgl_vendor="Intel Inc.",
+    renderer="Intel(R) UHD Graphics 620",
+    fix_hairline=True,
+)
 
 try:
     print("[1/6] Visiting EuroDNS...")
@@ -389,7 +402,6 @@ try:
         print("\n[Warning] CAPTCHA was not completed after maximum attempts.")
 
 finally:
-    # Auto-close Chrome and cleanly terminate all background driver processes
     try:
         driver.close()
     except Exception:
