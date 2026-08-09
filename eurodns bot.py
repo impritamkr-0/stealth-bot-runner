@@ -32,6 +32,16 @@ def get_chrome_major_version():
             pass
     return None
 
+def build_chrome_options(profile_dir):
+    """Generates a fresh ChromeOptions object per launch attempt."""
+    opts = uc.ChromeOptions()
+    opts.add_argument(f"--user-data-dir={profile_dir}")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--window-size=1920,1080")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    return opts
+
 print("[Init] Loading YOLOv8s vision model...")
 model = YOLO("yolov8s.pt")
 
@@ -215,7 +225,6 @@ def solve_recaptcha_v2(driver, max_attempts=4):
 
                 tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
 
-                # Break out if Google is looping the exact same tiles
                 if tiles_to_click == previous_click_set and d_round >= 1:
                     print("      [Loop Detected] Repeating dynamic tiles. Reloading challenge...")
                     reload_captcha(driver)
@@ -239,7 +248,6 @@ def solve_recaptcha_v2(driver, max_attempts=4):
                     except Exception:
                         break
 
-        # Explicitly trigger verify button click
         try:
             verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
             driver.execute_script("arguments[0].click();", verify_btn)
@@ -278,27 +286,23 @@ def generate_strong_password(length=16):
     return "".join(random.choice(chars) for _ in range(length))
 
 temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
-
-options = uc.ChromeOptions()
-options.add_argument(f"--user-data-dir={temp_profile_dir}")
-options.add_argument("--no-sandbox")
-options.add_argument("--disable-dev-shm-usage")
-options.add_argument("--window-size=1920,1080")
-options.add_argument("--disable-blink-features=AutomationControlled")
-
 installed_chrome_version = get_chrome_major_version()
 
 driver = None
 version_candidates = [installed_chrome_version, 150, 151, None]
+
 for ver in version_candidates:
     try:
-        driver = uc.Chrome(options=options, version_main=ver)
+        fresh_options = build_chrome_options(temp_profile_dir)
+        driver = uc.Chrome(options=fresh_options, version_main=ver)
+        print(f"[Init] Driver initialized using version_main={ver}")
         break
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[Init] Launch attempt failed for version {ver}: {e}")
 
 if not driver:
-    driver = uc.Chrome(options=options)
+    fresh_options = build_chrome_options(temp_profile_dir)
+    driver = uc.Chrome(options=fresh_options)
 
 stealth(
     driver,
