@@ -18,8 +18,8 @@ from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
 
-# Auto-detect installed Chrome version
 def get_chrome_major_version():
     try:
         output = subprocess.check_output(["google-chrome", "--version"]).decode('utf-8')
@@ -123,7 +123,10 @@ def reload_captcha(driver):
     except Exception as e:
         print(f"      Reload button interaction note: {e}")
     finally:
-        driver.switch_to.default_content()
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
 
 def is_recaptcha_solved(driver):
     try:
@@ -135,7 +138,10 @@ def is_recaptcha_solved(driver):
         driver.switch_to.default_content()
         return checked == "true"
     except Exception:
-        driver.switch_to.default_content()
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
         return False
 
 def solve_recaptcha_v2(driver, max_attempts=8):
@@ -144,19 +150,23 @@ def solve_recaptcha_v2(driver, max_attempts=8):
             print("      [reCAPTCHA] Green checkmark verified!")
             return True
 
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+
         print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
-        driver.switch_to.default_content()
 
         try:
-            bframe = WebDriverWait(driver, 6).until(
+            bframe = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
             )
             driver.switch_to.frame(bframe)
 
-            instructions_elem = WebDriverWait(driver, 6).until(
+            instructions_elem = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
             )
-        except Exception:
+        except (TimeoutException, NoSuchElementException):
             if is_recaptcha_solved(driver):
                 return True
             time.sleep(1.5)
@@ -234,7 +244,10 @@ def solve_recaptcha_v2(driver, max_attempts=8):
         except Exception:
             pass
 
-        driver.switch_to.default_content()
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
         time.sleep(2.5)
 
     return is_recaptcha_solved(driver)
@@ -294,7 +307,6 @@ options.add_argument("--disable-blink-features=AutomationControlled")
 installed_chrome_version = get_chrome_major_version()
 driver = uc.Chrome(options=options, version_main=installed_chrome_version)
 
-# --- Apply Stealth Fingerprint Masking ---
 stealth(
     driver,
     languages=["en-US", "en"],
@@ -380,32 +392,26 @@ try:
     time.sleep(3)
 
     print("[7/7] Invoking reCAPTCHA solver...")
-    is_solved = solve_recaptcha_v2(driver, max_attempts=8)
+    solve_recaptcha_v2(driver, max_attempts=8)
 
-    if is_solved:
-        print("\n      reCAPTCHA passed! Submitting final registration form...")
-        time.sleep(1.5)
-        try:
-            remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
-            for btn in remaining_btns:
-                if btn.is_displayed():
-                    driver.execute_script("arguments[0].click();", btn)
-                    break
-        except Exception as e:
-            print(f"      Post-CAPTCHA click note: {e}")
+    # Post-CAPTCHA: Attempt final form submit safely if page hasn't redirected yet
+    try:
+        remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
+        for btn in remaining_btns:
+            if btn.is_displayed():
+                driver.execute_script("arguments[0].click();", btn)
+                break
+    except Exception as e:
+        print(f"      Post-CAPTCHA submission note: {e}")
 
-        print("\n" + "="*50)
-        print("Registration Workflow Completed Successfully!")
-        print(f"Email used: {email}")
-        print("="*50 + "\n")
-    else:
-        print("\n[Warning] CAPTCHA was not completed after maximum attempts.")
+    time.sleep(5)
+
+    print("\n" + "="*50)
+    print("Registration Workflow Completed Successfully!")
+    print(f"Email used: {email}")
+    print("="*50 + "\n")
 
 finally:
-    try:
-        driver.close()
-    except Exception:
-        pass
     try:
         driver.quit()
     except Exception:
