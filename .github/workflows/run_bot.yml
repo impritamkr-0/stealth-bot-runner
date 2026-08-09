@@ -17,7 +17,6 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
-      # Route traffic via Cloudflare WARP for fresh IP reputation
       - name: Setup Cloudflare WARP IP Bypass
         uses: fscarmen/warp-on-actions@main
         with:
@@ -27,7 +26,7 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y xvfb google-chrome-stable
+          sudo apt-get install -y xvfb google-chrome-stable libgl1-mesa-glx libglib2.0-0
 
       - name: Install Python Dependencies
         run: |
