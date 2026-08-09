@@ -41,7 +41,10 @@ UNSUPPORTED_PROMPTS = [
 ]
 
 def get_chrome_major_version():
-    """Detects installed Chrome major version robustly."""
+    """
+    Detects the EXACT installed Chrome major version.
+    Returns an integer, e.g., 150.
+    """
     chrome_cmds = [
         ["google-chrome-stable", "--version"],
         ["google-chrome", "--version"],
@@ -56,14 +59,16 @@ def get_chrome_major_version():
             if not output:
                 output = result.stderr.strip()
             
+            # Regex to match "Google Chrome 150.0.7871.0" or "150.0.7871.0"
             match = re.search(r'(\d+)\.\d+\.\d+\.\d+', output)
             if match:
                 version = int(match.group(1))
-                print(f"[Init] Found Chrome version: {version}")
+                print(f"[Init] Detected Chrome Version: {version}")
                 return version
         except Exception:
             continue
             
+    # Fallback if detection fails
     print("[Init] Chrome version detection failed, defaulting to 150")
     return 150
 
@@ -90,7 +95,6 @@ def detect_target_tiles_optimized(full_img, yolo_target, rows=3, cols=3):
     Optimized detection:
     1. Crop each tile individually.
     2. Run YOLO on the crop.
-    3. This is more accurate than full-canvas detection for small grids.
     """
     w, h = full_img.size
     tile_w, tile_h = w / cols, h / rows
@@ -107,16 +111,12 @@ def detect_target_tiles_optimized(full_img, yolo_target, rows=3, cols=3):
             
             tile_crop = full_img.crop((left, top, right, bottom))
             
-            # Run YOLO on the crop with HIGHER confidence
+            # Run YOLO on the crop with HIGHER confidence (0.35) to reduce false positives
             results = model(tile_crop, verbose=False, conf=0.35, iou=0.7)
             
             for result in results:
                 for box in result.boxes:
                     detected_class = model.names[int(box.cls[0])].lower()
-                    confidence = float(box.conf[0])
-                    
-                    # DEBUG: Print what is being detected
-                    # print(f" [Tile {tile_idx}] Detected: '{detected_class}' (Conf: {confidence:.2f})")
                     
                     if detected_class == yolo_target:
                         click_indices.add(tile_idx)
@@ -127,19 +127,17 @@ def detect_target_tiles_optimized(full_img, yolo_target, rows=3, cols=3):
 def reload_captcha(driver):
     print(" [Reloading Captcha]")
     try:
-        # Click the reload button
         driver.execute_script("""
             var btn = document.getElementById('recaptcha-reload-button');
             if (btn) btn.click();
         """)
-        time.sleep(1.5) # Wait for new images to load
+        time.sleep(1.5)
     except Exception as e:
         print(f" [Reload Error]: {e}")
 
 def is_recaptcha_solved(driver):
     try:
         driver.switch_to.default_content()
-        # Check if the checkbox is checked
         anchor_frame = driver.find_element(By.XPATH, '//iframe[contains(@src, "recaptcha/api2/anchor")]')
         driver.switch_to.frame(anchor_frame)
         checkbox = driver.find_element(By.ID, "recaptcha-anchor")
@@ -158,27 +156,23 @@ def solve_recaptcha_v2(driver):
         print(f" --- Captcha Attempt {attempt + 1}/{MAX_RECAPTCHA_ATTEMPTS} ---")
         
         try:
-            # Switch to the captcha frame
             driver.switch_to.default_content()
             bframe = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
             )
             driver.switch_to.frame(bframe)
 
-            # Get instructions
             instructions_elem = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
             )
             full_instruction_text = instructions_elem.text.lower()
             
-            # Extract the bolded target (e.g., "Select all squares with **cars**")
             try:
                 target_elem = instructions_elem.find_element(By.XPATH, './/strong')
                 prompt_text = target_elem.text.strip().lower()
             except:
                 prompt_text = full_instruction_text.split('select all squares with ')[1].split('.')[0]
 
-            # Check if prompt is supported
             if any(unsupported in prompt_text for unsupported in UNSUPPORTED_PROMPTS):
                 print(f" [SKIP] Unsupported prompt: '{prompt_text}'")
                 reload_captcha(driver)
@@ -187,15 +181,10 @@ def solve_recaptcha_v2(driver):
             yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
             print(f" [Target]: '{prompt_text}' -> YOLO: '{yolo_target}'")
 
-            # Detect grid size
             tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
             grid_count = len(tile_elements)
             rows, cols = (4, 4) if grid_count == 16 else (3, 3)
 
-            # Get the first image to determine full grid size
-            first_img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
-            
-            # Download the full grid image (ReCaptcha V2 serves individual tiles)
             full_grid_imgs = []
             for i in range(grid_count):
                 try:
@@ -212,11 +201,9 @@ def solve_recaptcha_v2(driver):
                 reload_captcha(driver)
                 continue
 
-            # Create a composite image for easier processing
             sample_img = full_grid_imgs[0]
             tile_w, tile_h = sample_img.size
             
-            # Create a blank grid image
             full_grid_img = Image.new('RGB', (tile_w * cols, tile_h * rows))
             for r in range(rows):
                 for c in range(cols):
@@ -224,7 +211,6 @@ def solve_recaptcha_v2(driver):
                     if idx < len(full_grid_imgs):
                         full_grid_img.paste(full_grid_imgs[idx], (c * tile_w, r * tile_h))
 
-            # Detect targets
             tiles_to_click = detect_target_tiles_optimized(full_grid_img, yolo_target, rows, cols)
 
             if not tiles_to_click:
@@ -234,27 +220,23 @@ def solve_recaptcha_v2(driver):
 
             print(f" [CLICKING] Tiles: {tiles_to_click}")
             
-            # Click the tiles
             for idx in tiles_to_click:
                 try:
-                    # Re-fetch elements to avoid StaleElementReferenceException
                     current_tiles = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
                     if idx < len(current_tiles):
                         driver.execute_script("arguments[0].click();", current_tiles[idx])
-                        time.sleep(0.2) # Small delay between clicks
+                        time.sleep(0.2)
                 except Exception as e:
                     print(f" [Click Error]: {e}")
                     break
 
-            # Click Verify Button
             try:
                 verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
                 driver.execute_script("arguments[0].click();", verify_btn)
-                time.sleep(2.0) # Wait for result
+                time.sleep(2.0)
             except Exception:
                 pass
 
-            # Check if solved
             if is_recaptcha_solved(driver):
                 return True
             else:
@@ -297,24 +279,35 @@ temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
 chrome_version = get_chrome_major_version()
 
 driver = None
+driver_error = None
 
-# Try to launch with the detected version
-try:
-    fresh_options = build_chrome_options(temp_profile_dir)
-    # Force the version_main to match the installed Chrome
-    driver = uc.Chrome(options=fresh_options, version_main=chrome_version)
-    print(f"[Init] Driver initialized successfully using version {chrome_version}")
-except Exception as e:
-    print(f"[Init] Launch attempt failed for version {chrome_version}: {e}")
-    # Fallback: try without explicit version (might download wrong driver)
+# Try to launch with the detected version, then fallback to -1, -2, etc.
+# This handles the case where Chrome is 150 but UC tries to grab 151
+for version_offset in range(0, 5):
+    try_version = chrome_version - version_offset
+    if try_version < 100:
+        break
+        
+    print(f"[Init] Attempting to launch ChromeDriver for Chrome version {try_version}")
     try:
         fresh_options = build_chrome_options(temp_profile_dir)
-        driver = uc.Chrome(options=fresh_options)
-        print(f"[Init] Driver initialized using default version (fallback)")
-    except Exception as e2:
-        print(f"[Init] Default launch failed: {e2}")
+        # version_main forces UC to download/use the specific major version
+        driver = uc.Chrome(options=fresh_options, version_main=try_version)
+        print(f"[Init] Success! Driver initialized using version {try_version}")
+        driver_error = None
+        break
+    except Exception as e:
+        driver_error = e
+        print(f"[Init] Failed for version {try_version}: {str(e)[:100]}...")
+        # Clean up failed driver instance if any
+        try:
+            driver.quit()
+        except:
+            pass
+        driver = None
 
 if not driver:
+    print(f"[Init] All version attempts failed. Last error: {driver_error}")
     raise Exception("Failed to initialize Chrome Driver")
 
 stealth(
@@ -384,7 +377,7 @@ try:
     """, create_account_target)
     time.sleep(1.5)
 
-    # Solve CAPTCHA (Optimized)
+    # Solve CAPTCHA
     solve_recaptcha_v2(driver)
 
     # Trigger final submit
