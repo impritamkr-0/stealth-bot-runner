@@ -1,5 +1,6 @@
 undetected-chromedriver
 selenium
+selenium-stealth
 ultralytics
 opencv-python
 pillow
