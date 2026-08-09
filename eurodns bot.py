@@ -18,33 +18,12 @@ from selenium_stealth import stealth
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException, ElementClickInterceptedException
+import numpy as np
 
-def get_chrome_major_version():
-    """Detects installed Chrome major version."""
-    for cmd in ["google-chrome --version", "google-chrome-stable --version", "chromium-browser --version", "chromium --version"]:
-        try:
-            output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode('utf-8')
-            match = re.search(r"(\d+)\.\d+\.\d+\.\d+", output)
-            if match:
-                return int(match.group(1))
-        except Exception:
-            pass
-    return None
-
-def build_chrome_options(profile_dir):
-    """Generates a fresh ChromeOptions object per launch attempt."""
-    opts = uc.ChromeOptions()
-    opts.add_argument(f"--user-data-dir={profile_dir}")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--window-size=1920,1080")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    return opts
-
-print("[Init] Loading YOLOv8s vision model...")
-model = YOLO("yolov8s.pt")
-
+# --- Configuration ---
+MAX_RECAPTCHA_ATTEMPTS = 3
+YOLO_MODEL_PATH = "yolov8s.pt"
 LABEL_MAP = {
     "bicycles": "bicycle", "bicycle": "bicycle", "a bicycle": "bicycle",
     "cars": "car", "car": "car", "vehicles": "car", "a car": "car",
@@ -57,74 +36,110 @@ LABEL_MAP = {
 
 UNSUPPORTED_PROMPTS = [
     "crosswalk", "crosswalks", "bridge", "bridges", "chimney", "chimneys",
-    "stairs", "palm tree", "palm trees", "mountain", "mountains", "statue"
+    "stairs", "palm tree", "palm trees", "mountain", "mountains", "statue",
+    "zebra", "zebras", "horse", "horses", "cow", "cows", "sheep", "dogs", "cats"
 ]
 
-def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3):
+def get_chrome_major_version():
+    """Detects installed Chrome major version robustly."""
+    chrome_cmds = [
+        ["google-chrome-stable", "--version"],
+        ["google-chrome", "--version"],
+        ["chromium-browser", "--version"],
+        ["chromium", "--version"]
+    ]
+    
+    for cmd in chrome_cmds:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            output = result.stdout.strip()
+            if not output:
+                output = result.stderr.strip()
+            
+            match = re.search(r'(\d+)\.\d+\.\d+\.\d+', output)
+            if match:
+                version = int(match.group(1))
+                print(f"[Init] Found Chrome version: {version}")
+                return version
+        except Exception:
+            continue
+            
+    print("[Init] Chrome version detection failed, defaulting to 150")
+    return 150
+
+def build_chrome_options(profile_dir):
+    """Generates a fresh ChromeOptions object per launch attempt."""
+    opts = uc.ChromeOptions()
+    opts.add_argument(f"--user-data-dir={profile_dir}")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--window-size=1920,1080")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--headless=new")
+    opts.add_argument("--lang=en-US")
+    opts.add_argument("--timezone=America/New_York")
+    return opts
+
+print("[Init] Loading YOLOv8s vision model...")
+model = YOLO(YOLO_MODEL_PATH)
+
+def detect_target_tiles_optimized(full_img, yolo_target, rows=3, cols=3):
+    """
+    Optimized detection:
+    1. Crop each tile individually.
+    2. Run YOLO on the crop.
+    3. This is more accurate than full-canvas detection for small grids.
+    """
     w, h = full_img.size
     tile_w, tile_h = w / cols, h / rows
-    tile_area = tile_w * tile_h
     click_indices = set()
 
-    # Pass 1: Full Canvas Detection
-    results_full = model(full_img, verbose=False, conf=0.10)
-    for result in results_full:
-        for box in result.boxes:
-            detected_class = model.names[int(box.cls[0])].lower()
-            conf = float(box.conf[0])
-
-            if detected_class == yolo_target:
-                bx1, by1, bx2, by2 = box.xyxy[0].tolist()
-                for r in range(rows):
-                    for c in range(cols):
-                        tx1, ty1 = c * tile_w, r * tile_h
-                        tx2, ty2 = (c + 1) * tile_w, (r + 1) * tile_h
-
-                        inter_w = max(0.0, min(bx2, tx2) - max(bx1, tx1))
-                        inter_h = max(0.0, min(by2, ty2) - max(by1, ty1))
-                        inter_area = inter_w * inter_h
-
-                        if (inter_area / tile_area) >= 0.02:
-                            tile_idx = r * cols + c
-                            click_indices.add(tile_idx)
-                            print(f"      [Canvas Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
-
-    # Pass 2: Individual Crop Detection
     for r in range(rows):
         for c in range(cols):
             tile_idx = r * cols + c
-            box = (int(c * tile_w), int(r * tile_h), int((c + 1) * tile_w), int((r + 1) * tile_h))
-            tile_crop = full_img.crop(box)
-
-            tile_results = model(tile_crop, verbose=False, conf=0.10)
-            for result in tile_results:
+            # Crop the specific tile
+            left = int(c * tile_w)
+            top = int(r * tile_h)
+            right = int((c + 1) * tile_w)
+            bottom = int((r + 1) * tile_h)
+            
+            tile_crop = full_img.crop((left, top, right, bottom))
+            
+            # Run YOLO on the crop with HIGHER confidence
+            results = model(tile_crop, verbose=False, conf=0.35, iou=0.7)
+            
+            for result in results:
                 for box in result.boxes:
                     detected_class = model.names[int(box.cls[0])].lower()
-                    conf = float(box.conf[0])
-
+                    confidence = float(box.conf[0])
+                    
+                    # DEBUG: Print what is being detected
+                    # print(f" [Tile {tile_idx}] Detected: '{detected_class}' (Conf: {confidence:.2f})")
+                    
                     if detected_class == yolo_target:
                         click_indices.add(tile_idx)
-                        print(f"      [Tile Crop Match] Tile {tile_idx} -> '{detected_class}' ({conf:.2f})")
-
+                        break # Found in this tile, move to next
+    
     return sorted(list(click_indices))
 
 def reload_captcha(driver):
-    print("      Reloading challenge for a recognizable prompt...")
+    print(" [Reloading Captcha]")
     try:
-        reload_btn = driver.find_element(By.ID, "recaptcha-reload-button")
-        driver.execute_script("arguments[0].click();", reload_btn)
-        time.sleep(1.0)
-    except Exception:
-        pass
-    finally:
-        try:
-            driver.switch_to.default_content()
-        except Exception:
-            pass
+        # Click the reload button
+        driver.execute_script("""
+            var btn = document.getElementById('recaptcha-reload-button');
+            if (btn) btn.click();
+        """)
+        time.sleep(1.5) # Wait for new images to load
+    except Exception as e:
+        print(f" [Reload Error]: {e}")
 
 def is_recaptcha_solved(driver):
     try:
         driver.switch_to.default_content()
+        # Check if the checkbox is checked
         anchor_frame = driver.find_element(By.XPATH, '//iframe[contains(@src, "recaptcha/api2/anchor")]')
         driver.switch_to.frame(anchor_frame)
         checkbox = driver.find_element(By.ID, "recaptcha-anchor")
@@ -132,125 +147,125 @@ def is_recaptcha_solved(driver):
         driver.switch_to.default_content()
         return checked == "true"
     except Exception:
-        try:
-            driver.switch_to.default_content()
-        except Exception:
-            pass
         return False
 
-# CAPPED AT EXACTLY 1 ROUND FOR MAXIMUM SPEED
-def solve_recaptcha_v2(driver, max_attempts=1):
-    for attempt in range(max_attempts):
+def solve_recaptcha_v2(driver):
+    for attempt in range(MAX_RECAPTCHA_ATTEMPTS):
         if is_recaptcha_solved(driver):
-            print("      [reCAPTCHA] Green checkmark verified!")
+            print(" [SUCCESS] Captcha solved!")
             return True
 
+        print(f" --- Captcha Attempt {attempt + 1}/{MAX_RECAPTCHA_ATTEMPTS} ---")
+        
         try:
+            # Switch to the captcha frame
             driver.switch_to.default_content()
-        except Exception:
-            pass
-
-        print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
-
-        try:
-            bframe = WebDriverWait(driver, 4).until(
+            bframe = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
             )
             driver.switch_to.frame(bframe)
 
-            instructions_elem = WebDriverWait(driver, 4).until(
+            # Get instructions
+            instructions_elem = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
             )
-        except (TimeoutException, NoSuchElementException):
-            if is_recaptcha_solved(driver):
-                return True
-            time.sleep(0.5)
-            continue
+            full_instruction_text = instructions_elem.text.lower()
+            
+            # Extract the bolded target (e.g., "Select all squares with **cars**")
+            try:
+                target_elem = instructions_elem.find_element(By.XPATH, './/strong')
+                prompt_text = target_elem.text.strip().lower()
+            except:
+                prompt_text = full_instruction_text.split('select all squares with ')[1].split('.')[0]
 
-        full_instruction_text = instructions_elem.text.lower()
-        target_elem = instructions_elem.find_element(By.XPATH, './/strong')
-        prompt_text = target_elem.text.strip().lower()
+            # Check if prompt is supported
+            if any(unsupported in prompt_text for unsupported in UNSUPPORTED_PROMPTS):
+                print(f" [SKIP] Unsupported prompt: '{prompt_text}'")
+                reload_captcha(driver)
+                continue
 
-        if any(unsupported in prompt_text for unsupported in UNSUPPORTED_PROMPTS):
-            print(f"      [Instant Skip] '{prompt_text}' unsupported prompt. Reloading...")
-            reload_captcha(driver)
-            time.sleep(1.0)
-            continue
+            yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
+            print(f" [Target]: '{prompt_text}' -> YOLO: '{yolo_target}'")
 
-        yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
-        is_dynamic = "none left" in full_instruction_text or "new ones" in full_instruction_text
-        print(f"      [Prompt]: '{prompt_text}' -> YOLO: '{yolo_target}' | Dynamic: {is_dynamic}")
-
-        if not is_dynamic:
+            # Detect grid size
             tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
             grid_count = len(tile_elements)
             rows, cols = (4, 4) if grid_count == 16 else (3, 3)
 
-            img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
-            img_bytes = requests.get(img_elem.get_attribute("src")).content
-            full_img = Image.open(io.BytesIO(img_bytes))
-
-            tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
-
-            if not tiles_to_click:
+            # Get the first image to determine full grid size
+            first_img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
+            
+            # Download the full grid image (ReCaptcha V2 serves individual tiles)
+            full_grid_imgs = []
+            for i in range(grid_count):
+                try:
+                    img_elem = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')[i]
+                    src = img_elem.get_attribute("src")
+                    response = requests.get(src, timeout=5)
+                    img = Image.open(io.BytesIO(response.content))
+                    full_grid_imgs.append(img)
+                except Exception as e:
+                    print(f" [Img Load Error]: {e}")
+                    break
+            
+            if not full_grid_imgs:
                 reload_captcha(driver)
-                time.sleep(1.0)
                 continue
 
-            print(f"      Static Mode: Clicking tiles -> {tiles_to_click}")
+            # Create a composite image for easier processing
+            sample_img = full_grid_imgs[0]
+            tile_w, tile_h = sample_img.size
+            
+            # Create a blank grid image
+            full_grid_img = Image.new('RGB', (tile_w * cols, tile_h * rows))
+            for r in range(rows):
+                for c in range(cols):
+                    idx = r * cols + c
+                    if idx < len(full_grid_imgs):
+                        full_grid_img.paste(full_grid_imgs[idx], (c * tile_w, r * tile_h))
+
+            # Detect targets
+            tiles_to_click = detect_target_tiles_optimized(full_grid_img, yolo_target, rows, cols)
+
+            if not tiles_to_click:
+                print(" [NO TILES FOUND] Reloading...")
+                reload_captcha(driver)
+                continue
+
+            print(f" [CLICKING] Tiles: {tiles_to_click}")
+            
+            # Click the tiles
             for idx in tiles_to_click:
                 try:
-                    driver.execute_script("arguments[0].click();", tile_elements[idx])
-                    time.sleep(0.15)
-                except Exception:
+                    # Re-fetch elements to avoid StaleElementReferenceException
+                    current_tiles = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
+                    if idx < len(current_tiles):
+                        driver.execute_script("arguments[0].click();", current_tiles[idx])
+                        time.sleep(0.2) # Small delay between clicks
+                except Exception as e:
+                    print(f" [Click Error]: {e}")
                     break
 
-            time.sleep(0.3)
+            # Click Verify Button
+            try:
+                verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
+                driver.execute_script("arguments[0].click();", verify_btn)
+                time.sleep(2.0) # Wait for result
+            except Exception:
+                pass
 
-        else:
-            max_dynamic_rounds = 2
-            total_clicks = 0
+            # Check if solved
+            if is_recaptcha_solved(driver):
+                return True
+            else:
+                print(" [FAILED] Reloading for next attempt...")
+                reload_captcha(driver)
 
-            for d_round in range(max_dynamic_rounds):
-                tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
-                grid_count = len(tile_elements)
-                rows, cols = (4, 4) if grid_count == 16 else (3, 3)
+        except Exception as e:
+            print(f" [Exception]: {e}")
+            reload_captcha(driver)
 
-                img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
-                img_bytes = requests.get(img_elem.get_attribute("src")).content
-                full_img = Image.open(io.BytesIO(img_bytes))
-
-                tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
-
-                if not tiles_to_click:
-                    if total_clicks == 0:
-                        reload_captcha(driver)
-                        break
-                    else:
-                        break
-
-                print(f"      Dynamic Sub-Round {d_round + 1}: Clicking -> {tiles_to_click}")
-                for idx in tiles_to_click:
-                    try:
-                        driver.execute_script("arguments[0].click();", tile_elements[idx])
-                        total_clicks += 1
-                        time.sleep(1.2)
-                    except Exception:
-                        break
-
-        try:
-            verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
-            driver.execute_script("arguments[0].click();", verify_btn)
-        except Exception:
-            pass
-
-        try:
-            driver.switch_to.default_content()
-        except Exception:
-            pass
-        time.sleep(1.0)
-
-    return is_recaptcha_solved(driver)
+    return False
 
 def create_real_temp_email():
     req = urllib.request.Request("https://api.mail.tm/domains", headers={'User-Agent': 'Mozilla/5.0'})
@@ -275,24 +290,32 @@ def generate_strong_password(length=16):
     chars = string.ascii_lowercase + string.ascii_uppercase + string.digits + "!@#$%^&*()"
     return "".join(random.choice(chars) for _ in range(length))
 
+# --- Main Execution ---
 temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
-installed_chrome_version = get_chrome_major_version()
+
+# Get the installed Chrome version
+chrome_version = get_chrome_major_version()
 
 driver = None
-version_candidates = [installed_chrome_version, 150, 151, None]
 
-for ver in version_candidates:
+# Try to launch with the detected version
+try:
+    fresh_options = build_chrome_options(temp_profile_dir)
+    # Force the version_main to match the installed Chrome
+    driver = uc.Chrome(options=fresh_options, version_main=chrome_version)
+    print(f"[Init] Driver initialized successfully using version {chrome_version}")
+except Exception as e:
+    print(f"[Init] Launch attempt failed for version {chrome_version}: {e}")
+    # Fallback: try without explicit version (might download wrong driver)
     try:
         fresh_options = build_chrome_options(temp_profile_dir)
-        driver = uc.Chrome(options=fresh_options, version_main=ver)
-        print(f"[Init] Driver initialized using version_main={ver}")
-        break
-    except Exception as e:
-        print(f"[Init] Launch attempt failed for version {ver}: {e}")
+        driver = uc.Chrome(options=fresh_options)
+        print(f"[Init] Driver initialized using default version (fallback)")
+    except Exception as e2:
+        print(f"[Init] Default launch failed: {e2}")
 
 if not driver:
-    fresh_options = build_chrome_options(temp_profile_dir)
-    driver = uc.Chrome(options=fresh_options)
+    raise Exception("Failed to initialize Chrome Driver")
 
 stealth(
     driver,
@@ -329,7 +352,7 @@ try:
 
     email, _ = create_real_temp_email()
     pwd = generate_strong_password(16)
-    print(f"      Generated Email:    {email}")
+    print(f" Generated Email: {email}")
 
     email_field = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[id*='email']"))
@@ -361,8 +384,8 @@ try:
     """, create_account_target)
     time.sleep(1.5)
 
-    # Solve CAPTCHA (1 Round Capped)
-    solve_recaptcha_v2(driver, max_attempts=1)
+    # Solve CAPTCHA (Optimized)
+    solve_recaptcha_v2(driver)
 
     # Trigger final submit
     try:
