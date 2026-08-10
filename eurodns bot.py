@@ -377,3 +377,105 @@ def solve_recaptcha_v2(driver, max_attempts=1):
         human_like_sleep(1000, 1500)
 
     return is_recaptcha_solved(driver)
+
+# ==================== MAIN EXECUTION ====================
+if __name__ == "__main__":
+    temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
+    installed_chrome_version = get_chrome_major_version()
+
+    # Clear undetected_chromedriver cache to prevent driver locks
+    uc_cache = os.path.expanduser("~/.local/share/undetected_chromedriver")
+    shutil.rmtree(uc_cache, ignore_errors=True)
+
+    opts, profile = build_chrome_options(temp_profile_dir)
+
+    print("[1/6] Launching Chrome...")
+    try:
+        driver = uc.Chrome(options=opts, version_main=installed_chrome_version)
+    except Exception:
+        driver = uc.Chrome(options=opts)
+
+    stealth(
+        driver,
+        languages=["en-US", "en"],
+        vendor=profile["vendor"],
+        platform=profile["platform"],
+        webgl_vendor=profile["vendor"],
+        renderer=profile["renderer"],
+        fix_hairline=True,
+    )
+
+    try:
+        print("[2/6] Navigating to EuroDNS...")
+        driver.get("https://eurodns.pxf.io/PzkDy6")
+        human_like_sleep(1500, 2500)
+
+        print("[3/6] Clicking 'My account'...")
+        try:
+            my_account_btn = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.ID, "account-item-logout"))
+            )
+            human_click(driver, my_account_btn)
+        except Exception as e:
+            print(f"      Account button note: {e}")
+
+        print("[4/6] Clicking 'New account'...")
+        try:
+            new_account_btn = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']"))
+            )
+            human_click(driver, new_account_btn)
+        except Exception as e:
+            print(f"      New account button note: {e}")
+
+        human_like_sleep(2000, 3000)
+
+        # Generate credentials
+        email_addr = f"user_{uuid.uuid4().hex[:8]}@emalupe.com"
+        pwd = generate_strong_password(16)
+        print(f"      Generated Email: {email_addr}")
+
+        print("[5/6] Filling form fields...")
+        email_field = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, "//input[@type='email' or @name='email' or contains(@id, 'email')]"))
+        )
+        email_field.clear()
+        email_field.send_keys(email_addr)
+
+        password_field = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, "//input[@type='password' or @name='password' or contains(@id, 'password')]"))
+        )
+        password_field.clear()
+        password_field.send_keys(pwd)
+
+        # Submit form to trigger CAPTCHA
+        print("[6/6] Submitting registration form...")
+        submit_btn = WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']"))
+        )
+        human_click(driver, submit_btn)
+        human_like_sleep(2000, 3000)
+
+        # Solve CAPTCHA challenge
+        solve_recaptcha_v2(driver, max_attempts=1)
+
+        # Trigger final submission step
+        try:
+            remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
+            for btn in remaining_btns:
+                if btn.is_displayed():
+                    human_click(driver, btn)
+                    break
+        except Exception:
+            pass
+
+        time.sleep(10.0)
+        print(f"Final Landed URL: {driver.current_url}")
+
+    finally:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+        shutil.rmtree(temp_profile_dir, ignore_errors=True)
+        print("[Clean exit] Chrome closed.")
