@@ -17,6 +17,13 @@ jobs:
           python-version: '3.10'
           cache: 'pip'
 
+      # Caches YOLO model weights to prevent downloading ~50MB on every run
+      - name: Cache YOLO Model
+        uses: actions/cache@v4
+        with:
+          path: yolov8m.pt
+          key: yolo-v8m-model
+
       # Route traffic via Cloudflare WARP for fresh IP reputation
       - name: Setup Cloudflare WARP IP Bypass
         uses: fscarmen/warp-on-actions@main
