@@ -301,10 +301,14 @@ def solve_recaptcha_v2(driver, max_attempts=1):
             print("[reCAPTCHA] Already solved")
             return True
 
-        try:
+try:
             driver.switch_to.default_content()
         except Exception:
             pass
 
+        print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
+
         try:
-            bframe = WebDriverWait(driver, 4)
+            bframe = WebDriverWait(driver, 4).until(
+                EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
+            )
