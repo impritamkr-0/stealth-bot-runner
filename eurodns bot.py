@@ -322,18 +322,28 @@ if __name__ == "__main__":
         pwd = generate_strong_password(16)
         print(f"      Generated Email: {email_addr}")
 
-        print("[5/6] Filling form fields...")
+print("[5/6] Filling form fields...")
         email_field = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.XPATH, "//input[@type='email' or @name='email' or contains(@id, 'email')]"))
         )
         email_field.clear()
-        email_field.send_keys(email_addr)
+        driver.execute_script("""
+            var el = arguments[0];
+            el.value = arguments[1];
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        """, email_field, email_addr)
 
         password_field = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.XPATH, "//input[@type='password' or @name='password' or contains(@id, 'password')]"))
         )
         password_field.clear()
-        password_field.send_keys(pwd)
+        driver.execute_script("""
+            var el = arguments[0];
+            el.value = arguments[1];
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        """, password_field, pwd)
 
         print("[6/6] Submitting registration form...")
         submit_btn = WebDriverWait(driver, 10).until(
