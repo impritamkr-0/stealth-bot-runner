@@ -20,6 +20,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
+from webdriver_manager.chrome import ChromeDriverManager
 
 # ==================== BROWSER FINGERPRINTS ====================
 BROWSER_PROFILES = [
@@ -381,24 +382,51 @@ def solve_recaptcha_v2(driver, max_attempts=1):
     return is_recaptcha_solved(driver)
 
 def create_real_temp_email():
-    """Create a temporary email using mail.tm API"""
-    req = urllib.request.Request("https://api.mail.tm/domains", headers=get_random_headers())
-    with urllib.request.urlopen(req) as response:
-        domains_data = json.loads(response.read().decode('utf-8'))
-    
-    active_domain = domains_data['hydra:member'][0]['domain']
-    unique_user = f"user_{uuid.uuid4().hex[:8]}"
-    email_address = f"{unique_user}@{active_domain}"
-    account_password = generate_strong_password(16)
-
-    payload = json.dumps({"address": email_address, "password": account_password}).encode('utf-8')
-    post_req = urllib.request.Request(
-        "https://api.mail.tm/accounts",
-        data=payload,
-        headers={'Content-Type': 'application/json', **get_random_headers()}
-    )
-    with urllib.request.urlopen(post_req) as response:
+    """Create a temporary email using mail.tm API with error handling"""
+    try:
+        print("      [Email] Requesting domains from mail.tm API...")
+        req = urllib.request.Request("https://api.mail.tm/domains", headers=get_random_headers())
+        with urllib.request.urlopen(req, timeout=10) as response:
+            response_text = response.read().decode('utf-8')
+            
+            # Validate response is not empty
+            if not response_text or not response_text.strip():
+                raise ValueError("Empty response from mail.tm API")
+            
+            domains_data = json.loads(response_text)
+        
+        if 'hydra:member' not in domains_data or not domains_data['hydra:member']:
+            raise ValueError("No domains available in API response")
+        
+        active_domain = domains_data['hydra:member'][0]['domain']
+        unique_user = f"user_{uuid.uuid4().hex[:8]}"
+        email_address = f"{unique_user}@{active_domain}"
+        account_password = generate_strong_password(16)
+        
+        print(f"      [Email] Creating account with mail.tm...")
+        payload = json.dumps({"address": email_address, "password": account_password}).encode('utf-8')
+        post_req = urllib.request.Request(
+            "https://api.mail.tm/accounts",
+            data=payload,
+            headers={'Content-Type': 'application/json', **get_random_headers()},
+            timeout=10
+        )
+        with urllib.request.urlopen(post_req) as response:
+            response_text = response.read().decode('utf-8')
+            if not response_text or not response_text.strip():
+                raise ValueError("Empty response from account creation")
+        
+        print(f"      [Email] Successfully created: {email_address}")
         return email_address, account_password
+    
+    except Exception as e:
+        print(f"      [Email Creation Error] {e}")
+        # Fallback: Generate a generic temporary email
+        unique_user = f"user_{uuid.uuid4().hex[:8]}"
+        fallback_email = f"{unique_user}@tempmail.com"
+        fallback_password = generate_strong_password(16)
+        print(f"      [Email Fallback] Using: {fallback_email}")
+        return fallback_email, fallback_password
 
 def generate_strong_password(length=16):
     """Generate a random strong password"""
@@ -411,22 +439,38 @@ temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
 installed_chrome_version = get_chrome_major_version()
 
 driver = None
-version_candidates = [installed_chrome_version, 150, 151, None]
 
-for ver in version_candidates:
-    try:
-        fresh_options, selected_profile = build_chrome_options(temp_profile_dir)
-        driver = uc.Chrome(options=fresh_options, version_main=ver)
-        print(f"[Init] Driver initialized using version_main={ver}")
-        print(f"[Init] Using browser profile: {selected_profile['renderer']}")
-        break
-    except Exception as e:
-        print(f"[Init] Launch attempt failed for version {ver}: {e}")
-
-if not driver:
+# Try to initialize driver with automatic version management first
+try:
+    print("[Init] Initializing Chrome with automatic version management...")
     fresh_options, selected_profile = build_chrome_options(temp_profile_dir)
-    driver = uc.Chrome(options=fresh_options)
+    driver = uc.Chrome(
+        service=uc.ChromeService(ChromeDriverManager().install()),
+        options=fresh_options
+    )
+    print(f"[Init] Driver initialized with automatic ChromeDriver management")
     print(f"[Init] Using browser profile: {selected_profile['renderer']}")
+except Exception as e:
+    print(f"[Init] Automatic version failed: {e}")
+    print("[Init] Falling back to undetected_chromedriver default behavior...")
+    
+    # Fallback to version candidates
+    version_candidates = [installed_chrome_version, 150, 151, None]
+    
+    for ver in version_candidates:
+        try:
+            fresh_options, selected_profile = build_chrome_options(temp_profile_dir)
+            driver = uc.Chrome(options=fresh_options, version_main=ver)
+            print(f"[Init] Driver initialized using version_main={ver}")
+            print(f"[Init] Using browser profile: {selected_profile['renderer']}")
+            break
+        except Exception as e:
+            print(f"[Init] Launch attempt failed for version {ver}: {e}")
+    
+    if not driver:
+        fresh_options, selected_profile = build_chrome_options(temp_profile_dir)
+        driver = uc.Chrome(options=fresh_options)
+        print(f"[Init] Using browser profile: {selected_profile['renderer']}")
 
 # Apply stealth with randomized fingerprint
 stealth(
@@ -482,9 +526,25 @@ try:
     human_click(driver, new_account_btn)
     human_like_sleep(800, 1500)
 
-    email, _ = create_real_temp_email()
-    pwd = generate_strong_password(16)
-    print(f"      Generated Email:    {email}")
+    # Create email with retry logic
+    max_email_attempts = 3
+    email = None
+    pwd = None
+    
+    for attempt in range(max_email_attempts):
+        try:
+            print(f"      [Email Attempt {attempt + 1}/{max_email_attempts}]")
+            email, pwd = create_real_temp_email()
+            if email:
+                print(f"      Generated Email:    {email}")
+                break
+        except Exception as e:
+            print(f"      [Email Attempt {attempt + 1}/{max_email_attempts}] Exception: {e}")
+            if attempt < max_email_attempts - 1:
+                human_like_sleep(1000, 2000)
+    
+    if not email:
+        raise Exception("Failed to create temporary email after all attempts")
 
     email_field = WebDriverWait(driver, 5).until(
         EC.presence_of_element_located((By.CSS_SELECTOR, "input[type='email'], input[name='email'], input[id*='email']"))
