@@ -259,7 +259,7 @@ try:
 
         human_like_sleep(1500, 2500)
 
-    # Return result only AFTER all attempts complete (aligned with 'def solve_recaptcha_v2')
+    # Indented 4 spaces so it remains inside solve_recaptcha_v2
     return is_recaptcha_solved(driver)
 
 # ==================== MAIN EXECUTION ====================
