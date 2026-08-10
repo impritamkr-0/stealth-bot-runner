@@ -308,7 +308,6 @@ try:
 
         print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
 
-        try:
             bframe = WebDriverWait(driver, 4).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
             )
