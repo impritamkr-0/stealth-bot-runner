@@ -1,3 +1,4 @@
+# full_patched_eurodns.py
 import os
 import io
 import re
@@ -23,9 +24,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException, TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import (
+    NoSuchElementException,
+    TimeoutException,
+    StaleElementReferenceException,
+    ElementClickInterceptedException,
+)
 
-# ==================== CONFIG / FINGERPRINTS ====================
+# ----------------- CONFIG / HELPERS (kept from your original) -----------------
 BROWSER_PROFILES = [
     {
         "vendor": "Google Inc.",
@@ -89,12 +95,16 @@ def human_click(driver, element):
         try:
             driver.execute_script("arguments[0].click();", element)
         except Exception:
-            pass
+            try:
+                element.click()
+            except Exception:
+                pass
 
 def generate_strong_password(length=16):
     chars = string.ascii_lowercase + string.ascii_uppercase + string.digits + "!@#$%^&*()"
     return "".join(random.choice(chars) for _ in range(length))
 
+# YOLO loading (kept as in original; optional)
 model = None
 if YOLO is not None:
     try:
@@ -108,6 +118,7 @@ if YOLO is not None:
     except Exception:
         model = None
 
+# reCAPTCHA solver function placeholder (kept from your original file)
 LABEL_MAP = {
     "bicycles": "bicycle", "bicycle": "bicycle", "a bicycle": "bicycle",
     "cars": "car", "car": "car", "vehicles": "car", "a car": "car",
@@ -116,7 +127,6 @@ LABEL_MAP = {
     "traffic lights": "traffic light", "traffic light": "traffic light", "a traffic light": "traffic light",
     "fire hydrants": "fire hydrant", "fire hydrant": "fire hydrant", "a fire hydrant": "fire hydrant"
 }
-
 UNSUPPORTED_PROMPTS = ["crosswalk", "crosswalks", "bridge", "bridges", "chimney", "chimneys", "stairs"]
 
 def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3, conf_threshold=0.15):
@@ -173,6 +183,7 @@ def is_recaptcha_solved(driver):
         return False
 
 def solve_recaptcha_v2(driver, max_attempts=6):
+    # Keep your original solver implementation here (copied from your file).
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
             print("[reCAPTCHA] Green checkmark verified!")
@@ -261,7 +272,29 @@ def solve_recaptcha_v2(driver, max_attempts=6):
 
     return is_recaptcha_solved(driver)
 
-# ==================== MAIN EXECUTION ====================
+# ----------------- Robust click helper using your XPaths -----------------
+def wait_and_click(driver, xpath, timeout=15, desc=None):
+    desc = desc or xpath
+    try:
+        el = WebDriverWait(driver, timeout).until(
+            EC.element_to_be_clickable((By.XPATH, xpath))
+        )
+        human_click(driver, el)
+        human_like_sleep(800, 1400)
+        print(f"[OK] Clicked: {desc}")
+        return True
+    except (TimeoutException, StaleElementReferenceException, ElementClickInterceptedException) as e:
+        try:
+            el = driver.find_element(By.XPATH, xpath)
+            driver.execute_script("arguments[0].click();", el)
+            human_like_sleep(800, 1400)
+            print(f"[OK-fallback] JS clicked: {desc}")
+            return True
+        except Exception as e2:
+            print(f"[FAIL] Could not click {desc}: {e} | fallback: {e2}")
+            return False
+
+# ----------------- MAIN EXECUTION -----------------
 if __name__ == "__main__":
     temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
     installed_chrome_version = get_chrome_major_version()
@@ -271,8 +304,7 @@ if __name__ == "__main__":
 
     print("[1/6] Launching Chrome...")
     driver = None
-    
-    # Force alignment with installed Chrome version
+
     target_version = installed_chrome_version if installed_chrome_version else 150
 
     try:
@@ -299,74 +331,72 @@ if __name__ == "__main__":
         driver.get("https://eurodns.pxf.io/PzkDy6")
         human_like_sleep(1500, 2500)
 
-        print("[3/6] Clicking 'My account'...")
+        # 2. Accept cookies (your XPath)
+        if wait_and_click(driver, '//*[@id="cookiescript_accept"]', timeout=10, desc="Accept cookies"):
+            human_like_sleep(1200, 1800)
+        else:
+            print("Cookie accept not found or already accepted; continuing...")
+
+        # 3. Click My account (top-right)
+        if not wait_and_click(driver, '//*[@id="account-item-logout"]', timeout=12, desc="My account"):
+            print("Warning: My account click failed; trying presence-only lookup.")
+            try:
+                el = WebDriverWait(driver, 8).until(EC.presence_of_element_located((By.XPATH, '//*[@id="account-item-logout"]')))
+                driver.execute_script("arguments[0].scrollIntoView(true);", el)
+                human_click(driver, el)
+            except Exception as e:
+                print(f"My account fallback failed: {e}")
+
+        human_like_sleep(1500, 2500)
+
+        # 4. Click New account
+        if not wait_and_click(driver, '//*[@id="logout-user-section"]/a[2]', timeout=12, desc="New account"):
+            print("New account click failed; trying CSS fallback.")
+            try:
+                new_account_btn = driver.find_element(By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']")
+                human_click(driver, new_account_btn)
+            except Exception as e:
+                print(f"New account fallback failed: {e}")
+
+        # 5. Wait for email/password fields and fill them
         try:
-            my_account_btn = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.ID, "account-item-logout"))
-            )
-            human_click(driver, my_account_btn)
+            email_field = WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.XPATH, '//*[@id="mat-input-0"]')))
+            password_field = WebDriverWait(driver, 25).until(EC.presence_of_element_located((By.XPATH, '//*[@id="mat-input-1"]')))
+            email_addr = f"user_{uuid.uuid4().hex[:8]}@emalupe.com"
+            pwd = generate_strong_password(16)
+            driver.execute_script("arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input', {bubbles:true}));", email_field, email_addr)
+            human_like_sleep(300, 600)
+            driver.execute_script("arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input', {bubbles:true}));", password_field, pwd)
+            human_like_sleep(300, 600)
+            print(f"[OK] Filled email and password: {email_addr}")
         except Exception as e:
-            print(f"      Account button note: {e}")
+            print(f"[FAIL] Email/password fields not found: {e}")
 
-        print("[4/6] Clicking 'New account'...")
-        try:
-            new_account_btn = WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "a.btn.btn-secondary[href*='createNewAccount']"))
-            )
-            human_click(driver, new_account_btn)
-        except Exception as e:
-            print(f"      New account button note: {e}")
+        # 6. Check newsletter checkbox
+        wait_and_click(driver, '//*[@id="subscribe-newsletter-checkbox-input"]', timeout=8, desc="Newsletter checkbox")
 
-        human_like_sleep(2000, 3000)
+        # 7. Click Create account (triggers captcha)
+        create_account_xpath = '/html/body/edns-root/edns-layout/div/div/edns-side-panels/mat-sidenav-container/mat-sidenav-content/div/div[2]/edns-new-account/div/div/form/div[4]/button/span[2]'
+        if wait_and_click(driver, create_account_xpath, timeout=15, desc="Create account"):
+            human_like_sleep(1500, 2500)
+            print("[INFO] Create account clicked — waiting for reCAPTCHA to appear.")
+            solved = solve_recaptcha_v2(driver, max_attempts=6)
+            print(f"[INFO] Captcha solved: {solved}")
+        else:
+            print("[FAIL] Create account button click failed.")
 
-        email_addr = f"user_{uuid.uuid4().hex[:8]}@emalupe.com"
-        pwd = generate_strong_password(16)
-        print(f"      Generated Email: {email_addr}")
-
-        print("[5/6] Filling form fields...")
-        email_field = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//input[@type='email' or @name='email' or contains(@id, 'email')]"))
-        )
-        email_field.clear()
-        driver.execute_script("""
-            var el = arguments[0];
-            el.value = arguments[1];
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-        """, email_field, email_addr)
-
-        password_field = WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.XPATH, "//input[@type='password' or @name='password' or contains(@id, 'password')]"))
-        )
-        password_field.clear()
-        driver.execute_script("""
-            var el = arguments[0];
-            el.value = arguments[1];
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-        """, password_field, pwd)
-
-        print("[6/6] Submitting registration form...")
-        submit_btn = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']"))
-        )
-        human_click(driver, submit_btn)
-        human_like_sleep(2000, 3000)
-
-        # Solve CAPTCHA
-        solve_recaptcha_v2(driver, max_attempts=6)
-
-        # Final submission click
+        # Final submission click (if any)
         try:
             remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
             for btn in remaining_btns:
                 if btn.is_displayed():
                     human_click(driver, btn)
+                    human_like_sleep(800, 1200)
                     break
         except Exception:
             pass
 
-        time.sleep(10.0)
+        time.sleep(6.0)
         print(f"Final Landed URL: {driver.current_url}")
 
     finally:
