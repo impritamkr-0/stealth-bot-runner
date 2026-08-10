@@ -272,24 +272,17 @@ if __name__ == "__main__":
     print("[1/6] Launching Chrome...")
     driver = None
     
-    # Try with detected version first
-    if installed_chrome_version:
-        try:
-            opts, profile = build_chrome_options(temp_profile_dir)
-            driver = uc.Chrome(options=opts, version_main=installed_chrome_version)
-        except Exception as e:
-            print(f"      Launch attempt with version_main={installed_chrome_version} failed: {e}")
+# Force alignment with installed Chrome version
+    target_version = installed_chrome_version if installed_chrome_version else 150
 
-    # Fallback to default auto-detection with a fresh options instance
-    if not driver:
-        try:
-            shutil.rmtree(uc_cache, ignore_errors=True)
-            opts, profile = build_chrome_options(temp_profile_dir)
-            driver = uc.Chrome(options=opts)
-        except Exception as e:
-            print(f"      Default launch attempt failed: {e}")
-            raise e
-
+    try:
+        opts, profile = build_chrome_options(temp_profile_dir)
+        driver = uc.Chrome(options=opts, version_main=target_version)
+    except Exception as e:
+        print(f"      Primary launch attempt with version_main={target_version} failed: {e}")
+        shutil.rmtree(uc_cache, ignore_errors=True)
+        opts, profile = build_chrome_options(temp_profile_dir)
+        driver = uc.Chrome(options=opts, version_main=150)
     stealth(
         driver,
         languages=["en-US", "en"],
