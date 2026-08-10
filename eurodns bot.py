@@ -172,7 +172,7 @@ def is_recaptcha_solved(driver):
             pass
         return False
 
-def solve_recaptcha_v2(driver, max_attempts=3):
+def solve_recaptcha_v2(driver, max_attempts=6):
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
             print("[reCAPTCHA] Green checkmark verified!")
@@ -343,7 +343,7 @@ if __name__ == "__main__":
         human_like_sleep(2000, 3000)
 
         # Solve CAPTCHA
-        solve_recaptcha_v2(driver, max_attempts=3)
+        solve_recaptcha_v2(driver, max_attempts=6)
 
         # Final submission click
         try:
