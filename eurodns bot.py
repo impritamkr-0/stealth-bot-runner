@@ -243,7 +243,6 @@ def solve_recaptcha_v2(driver, max_attempts=3):
 
         human_like_sleep(500, 800)
 
-        # FIXED VERIFY BUTTON CLICK WITH EXPLICIT WAIT
         try:
             verify_btn = WebDriverWait(driver, 5).until(
                 EC.element_to_be_clickable((By.ID, "recaptcha-verify-button"))
@@ -270,13 +269,26 @@ if __name__ == "__main__":
     uc_cache = os.path.expanduser("~/.local/share/undetected_chromedriver")
     shutil.rmtree(uc_cache, ignore_errors=True)
 
-    opts, profile = build_chrome_options(temp_profile_dir)
-
     print("[1/6] Launching Chrome...")
-    try:
-        driver = uc.Chrome(options=opts, version_main=installed_chrome_version)
-    except Exception:
-        driver = uc.Chrome(options=opts)
+    driver = None
+    
+    # Try with detected version first
+    if installed_chrome_version:
+        try:
+            opts, profile = build_chrome_options(temp_profile_dir)
+            driver = uc.Chrome(options=opts, version_main=installed_chrome_version)
+        except Exception as e:
+            print(f"      Launch attempt with version_main={installed_chrome_version} failed: {e}")
+
+    # Fallback to default auto-detection with a fresh options instance
+    if not driver:
+        try:
+            shutil.rmtree(uc_cache, ignore_errors=True)
+            opts, profile = build_chrome_options(temp_profile_dir)
+            driver = uc.Chrome(options=opts)
+        except Exception as e:
+            print(f"      Default launch attempt failed: {e}")
+            raise e
 
     stealth(
         driver,
@@ -337,10 +349,10 @@ if __name__ == "__main__":
         human_click(driver, submit_btn)
         human_like_sleep(2000, 3000)
 
-        # Solve CAPTCHA with up to 3 retry rounds
+        # Solve CAPTCHA
         solve_recaptcha_v2(driver, max_attempts=3)
 
-        # Final submission click after CAPTCHA resolution
+        # Final submission click
         try:
             remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
             for btn in remaining_btns:
