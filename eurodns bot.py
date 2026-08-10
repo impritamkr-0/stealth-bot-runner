@@ -301,13 +301,79 @@ def solve_recaptcha_v2(driver, max_attempts=1):
             print("[reCAPTCHA] Already solved")
             return True
 
-try:
+        try:
             driver.switch_to.default_content()
         except Exception:
             pass
 
         print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
 
+        try:
             bframe = WebDriverWait(driver, 4).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
             )
+            driver.switch_to.frame(bframe)
+
+            instructions_elem = WebDriverWait(driver, 4).until(
+                EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
+            )
+        except (TimeoutException, NoSuchElementException):
+            if is_recaptcha_solved(driver):
+                return True
+            human_like_sleep(300, 600)
+            continue
+
+        full_instruction_text = instructions_elem.text.lower()
+        target_elem = instructions_elem.find_element(By.XPATH, './/strong')
+        prompt_text = target_elem.text.strip().lower()
+
+        if any(unsupported in prompt_text for unsupported in UNSUPPORTED_PROMPTS):
+            print(f"      [Instant Skip] '{prompt_text}' unsupported prompt. Reloading...")
+            reload_captcha(driver)
+            continue
+
+        yolo_target = LABEL_MAP.get(prompt_text, prompt_text)
+        is_dynamic = "none left" in full_instruction_text or "new ones" in full_instruction_text
+        print(f"      [Prompt]: '{prompt_text}' -> Target: '{yolo_target}' | Dynamic: {is_dynamic}")
+
+        tile_elements = driver.find_elements(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]')
+        grid_count = len(tile_elements)
+        rows, cols = (4, 4) if grid_count == 16 else (3, 3)
+
+        try:
+            img_elem = driver.find_element(By.XPATH, '//td[contains(@class, "rc-imageselect-tile")]//img')
+            img_bytes = requests.get(img_elem.get_attribute("src"), headers=get_random_headers()).content
+            full_img = Image.open(io.BytesIO(img_bytes))
+        except Exception as e:
+            print(f"      Image capture failed: {e}")
+            reload_captcha(driver)
+            continue
+
+        tiles_to_click = detect_target_tiles_hybrid(full_img, yolo_target, rows=rows, cols=cols)
+
+        if not tiles_to_click:
+            print("      No matching tiles identified. Reloading...")
+            reload_captcha(driver)
+            continue
+
+        print(f"      Clicking tiles -> {tiles_to_click}")
+        for idx in tiles_to_click:
+            try:
+                human_click(driver, tile_elements[idx])
+            except Exception:
+                break
+
+        try:
+            verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
+            human_click(driver, verify_btn)
+        except Exception:
+            pass
+
+        try:
+            driver.switch_to.default_content()
+        except Exception:
+            pass
+
+        human_like_sleep(1000, 1500)
+
+    return is_recaptcha_solved(driver)
