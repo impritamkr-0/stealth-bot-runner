@@ -252,13 +252,13 @@ def solve_recaptcha_v2(driver, max_attempts=6):
         except Exception as e:
             print(f"      Verify click failed/skipped: {e}")
 
-        try:
+try:
             driver.switch_to.default_content()
         except Exception:
             pass
-
         human_like_sleep(1500, 2500)
 
+    # Return result only AFTER all attempts complete
     return is_recaptcha_solved(driver)
 
 # ==================== MAIN EXECUTION ====================
