@@ -12,7 +12,6 @@ import requests
 import subprocess
 from PIL import Image
 
-# Optional vision model - ultralytics YOLOv8 (best-effort)
 try:
     from ultralytics import YOLO
 except Exception:
@@ -39,46 +38,16 @@ BROWSER_PROFILES = [
         "renderer": "ANGLE (NVIDIA GeForce GTX 1080)",
         "platform": "Win32",
         "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    },
-    {
-        "vendor": "Intel Inc.",
-        "renderer": "Intel Iris OpenGL Engine",
-        "platform": "MacIntel",
-        "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    },
-    {
-        "vendor": "Google Inc.",
-        "renderer": "ANGLE (AMD Radeon RX 580 Series)",
-        "platform": "Win32",
-        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    },
-    {
-        "vendor": "Google Inc.",
-        "renderer": "Mesa Intel(R) UHD Graphics",
-        "platform": "Linux x86_64",
-        "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
 ]
 
 ACCEPT_LANGUAGES = [
     "en-US,en;q=0.9",
-    "en-GB,en;q=0.8,en-US;q=0.7",
-    "en-US,en;q=0.95",
-    "en;q=0.9,en-US;q=0.8"
+    "en-GB,en;q=0.8,en-US;q=0.7"
 ]
 
-MAILTM_BASE = "https://api.mail.tm"
-
-# ==================== UTILITIES ====================
-
 def get_chrome_major_version():
-    """Detects installed Chrome major version (best effort)."""
-    for cmd in [
-        "google-chrome --version",
-        "google-chrome-stable --version",
-        "chromium-browser --version",
-        "chromium --version",
-    ]:
+    for cmd in ["google-chrome --version", "google-chrome-stable --version", "chromium-browser --version"]:
         try:
             output = subprocess.check_output(cmd, shell=True, stderr=subprocess.STDOUT).decode("utf-8")
             match = re.search(r"(\d+)\.\d+\.\d+\.\d+", output)
@@ -88,49 +57,32 @@ def get_chrome_major_version():
             pass
     return None
 
-
-def human_like_sleep(min_ms=100, max_ms=500):
-    """Random human-like delay in seconds."""
-    delay = random.uniform(min_ms / 1000.0, max_ms / 1000.0)
-    time.sleep(delay)
-
+def human_like_sleep(min_ms=200, max_ms=600):
+    time.sleep(random.uniform(min_ms / 1000.0, max_ms / 1000.0))
 
 def get_random_headers():
-    """Generate plausible browser headers for HTTP requests."""
     return {
         "User-Agent": random.choice([p["user_agent"] for p in BROWSER_PROFILES]),
         "Accept-Language": random.choice(ACCEPT_LANGUAGES),
         "Referer": "https://www.google.com/",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "DNT": "1",
     }
-
 
 def build_chrome_options(profile_dir):
     opts = uc.ChromeOptions()
     profile = random.choice(BROWSER_PROFILES)
-
     opts.add_argument(f"--user-data-dir={profile_dir}")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-dev-shm-usage")
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--disable-extensions")
-    opts.add_argument("--disable-popup-blocking")
-    opts.add_argument("--start-maximized")
     opts.add_argument(f"user-agent={profile['user_agent']}")
-
     return opts, profile
-
 
 def human_click(driver, element):
     try:
         actions = ActionChains(driver)
-        offset_x = random.randint(-8, 8)
-        offset_y = random.randint(-8, 8)
-        actions.move_to_element_with_offset(element, offset_x, offset_y)
-        human_like_sleep(50, 150)
+        actions.move_to_element_with_offset(element, random.randint(-4, 4), random.randint(-4, 4))
+        human_like_sleep(100, 250)
         actions.click()
         actions.perform()
     except Exception:
@@ -139,32 +91,22 @@ def human_click(driver, element):
         except Exception:
             pass
 
-
 def generate_strong_password(length=16):
     chars = string.ascii_lowercase + string.ascii_uppercase + string.digits + "!@#$%^&*()"
     return "".join(random.choice(chars) for _ in range(length))
 
-# ==================== OPTIONAL YOLO MODEL ====================
 model = None
 if YOLO is not None:
     try:
-        # attempt to load a local model file if present, otherwise skip
         model_path = os.path.join(os.path.dirname(__file__), "yolov8m.pt")
         if os.path.exists(model_path):
             model = YOLO(model_path)
             print("[Init] Loaded YOLO model from yolov8m.pt")
         else:
-            # try default model name (may attempt to download or fail)
-            try:
-                model = YOLO("yolov8m.pt")
-                print("[Init] Loaded YOLO model via name 'yolov8m.pt'")
-            except Exception:
-                print("[Init] YOLO model not available; falling back to non-vision detection")
-                model = None
+            model = YOLO("yolov8m.pt")
+            print("[Init] Loaded YOLO model via name 'yolov8m.pt'")
     except Exception:
         model = None
-else:
-    print("[Init] ultralytics not installed; vision features disabled")
 
 LABEL_MAP = {
     "bicycles": "bicycle", "bicycle": "bicycle", "a bicycle": "bicycle",
@@ -172,56 +114,23 @@ LABEL_MAP = {
     "buses": "bus", "bus": "bus", "a bus": "bus",
     "motorcycles": "motorcycle", "motorcycle": "motorcycle",
     "traffic lights": "traffic light", "traffic light": "traffic light", "a traffic light": "traffic light",
-    "fire hydrants": "fire hydrant", "fire hydrant": "fire hydrant", "a fire hydrant": "fire hydrant",
-    "boats": "boat", "boat": "boat", "trains": "train"
+    "fire hydrants": "fire hydrant", "fire hydrant": "fire hydrant", "a fire hydrant": "fire hydrant"
 }
 
-UNSUPPORTED_PROMPTS = [
-    "crosswalk", "crosswalks", "bridge", "bridges", "chimney", "chimneys",
-    "stairs", "palm tree", "palm trees", "mountain", "mountains", "statue"
-]
+UNSUPPORTED_PROMPTS = ["crosswalk", "crosswalks", "bridge", "bridges", "chimney", "chimneys", "stairs"]
 
-# ==================== CAPTCHA DETECTION HELPERS ====================
-
-def detect_by_color_similarity(full_img, rows=3, cols=3):
-    try:
-        import numpy as np
-    except Exception:
-        return []
-
-    img_array = np.array(full_img)
-    w, h = full_img.size
-    tile_w, tile_h = w / cols, h / rows
-
-    click_indices = []
-    for r in range(rows):
-        for c in range(cols):
-            tile_idx = r * cols + c
-            tile = img_array[int(r * tile_h):int((r + 1) * tile_h), int(c * tile_w):int((c + 1) * tile_w)]
-            if tile.size == 0:
-                continue
-            if np.std(tile) > 10:
-                click_indices.append(tile_idx)
-    return click_indices
-
-
-def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3, conf_threshold=0.25):
+def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3, conf_threshold=0.15):
     w, h = full_img.size
     tile_w, tile_h = w / cols, h / rows
     tile_area = tile_w * tile_h
     click_indices = set()
-    confidence_scores = []
 
-    # If vision model is available, try it; otherwise fallback
     if model is not None:
         try:
             results_full = model(full_img, verbose=False, conf=conf_threshold)
             for result in results_full:
                 for box in getattr(result, 'boxes', []):
-                    cls_i = int(box.cls[0])
-                    detected_class = model.names[cls_i].lower()
-                    conf = float(box.conf[0])
-                    confidence_scores.append(conf)
+                    detected_class = model.names[int(box.cls[0])].lower()
                     if detected_class == yolo_target:
                         bx1, by1, bx2, by2 = box.xyxy[0].tolist()
                         for r in range(rows):
@@ -230,44 +139,14 @@ def detect_target_tiles_hybrid(full_img, yolo_target, rows=3, cols=3, conf_thres
                                 tx2, ty2 = (c + 1) * tile_w, (r + 1) * tile_h
                                 inter_w = max(0.0, min(bx2, tx2) - max(bx1, tx1))
                                 inter_h = max(0.0, min(by2, ty2) - max(by1, ty1))
-                                inter_area = inter_w * inter_h
-                                if (inter_area / tile_area) >= 0.02:
-                                    tile_idx = r * cols + c
-                                    click_indices.add(tile_idx)
-        except Exception:
-            # model inference failed; continue to fallback
-            pass
-
-    # Per-tile crop detection if model available
-    if model is not None:
-        try:
-            for r in range(rows):
-                for c in range(cols):
-                    tile_idx = r * cols + c
-                    box = (int(c * tile_w), int(r * tile_h), int((c + 1) * tile_w), int((r + 1) * tile_h))
-                    tile_crop = full_img.crop(box)
-                    tile_results = model(tile_crop, verbose=False, conf=conf_threshold)
-                    for result in tile_results:
-                        for box in getattr(result, 'boxes', []):
-                            cls_i = int(box.cls[0])
-                            detected_class = model.names[cls_i].lower()
-                            conf = float(box.conf[0])
-                            confidence_scores.append(conf)
-                            if detected_class == yolo_target:
-                                click_indices.add(tile_idx)
+                                if ((inter_w * inter_h) / tile_area) >= 0.02:
+                                    click_indices.add(r * cols + c)
         except Exception:
             pass
-
-    # If nothing found or model not available, try color fallback
-    if not click_indices:
-        fallback = detect_by_color_similarity(full_img, rows=rows, cols=cols)
-        if fallback:
-            click_indices.update(fallback)
 
     if not click_indices:
         return None
     return sorted(list(click_indices))
-
 
 def reload_captcha(driver):
     try:
@@ -276,7 +155,6 @@ def reload_captcha(driver):
         human_like_sleep(800, 1200)
     except Exception:
         pass
-
 
 def is_recaptcha_solved(driver):
     try:
@@ -294,11 +172,10 @@ def is_recaptcha_solved(driver):
             pass
         return False
 
-
-def solve_recaptcha_v2(driver, max_attempts=1):
+def solve_recaptcha_v2(driver, max_attempts=3):
     for attempt in range(max_attempts):
         if is_recaptcha_solved(driver):
-            print("[reCAPTCHA] Already solved")
+            print("[reCAPTCHA] Green checkmark verified!")
             return True
 
         try:
@@ -309,12 +186,12 @@ def solve_recaptcha_v2(driver, max_attempts=1):
         print(f"\n      --- CAPTCHA Solving Round {attempt + 1}/{max_attempts} ---")
 
         try:
-            bframe = WebDriverWait(driver, 4).until(
+            bframe = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//iframe[contains(@src, "recaptcha/api2/bframe")]'))
             )
             driver.switch_to.frame(bframe)
 
-            instructions_elem = WebDriverWait(driver, 4).until(
+            instructions_elem = WebDriverWait(driver, 5).until(
                 EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "rc-imageselect-desc")]'))
             )
         except (TimeoutException, NoSuchElementException):
@@ -360,21 +237,28 @@ def solve_recaptcha_v2(driver, max_attempts=1):
         for idx in tiles_to_click:
             try:
                 human_click(driver, tile_elements[idx])
+                human_like_sleep(150, 300)
             except Exception:
                 break
 
+        human_like_sleep(500, 800)
+
+        # FIXED VERIFY BUTTON CLICK WITH EXPLICIT WAIT
         try:
-            verify_btn = driver.find_element(By.ID, "recaptcha-verify-button")
+            verify_btn = WebDriverWait(driver, 5).until(
+                EC.element_to_be_clickable((By.ID, "recaptcha-verify-button"))
+            )
             human_click(driver, verify_btn)
-        except Exception:
-            pass
+            print("      [Verify Button Clicked]")
+        except Exception as e:
+            print(f"      Verify click failed/skipped: {e}")
 
         try:
             driver.switch_to.default_content()
         except Exception:
             pass
 
-        human_like_sleep(1000, 1500)
+        human_like_sleep(1500, 2500)
 
     return is_recaptcha_solved(driver)
 
@@ -383,7 +267,6 @@ if __name__ == "__main__":
     temp_profile_dir = tempfile.mkdtemp(prefix="stealth_profile_")
     installed_chrome_version = get_chrome_major_version()
 
-    # Clear undetected_chromedriver cache to prevent driver locks
     uc_cache = os.path.expanduser("~/.local/share/undetected_chromedriver")
     shutil.rmtree(uc_cache, ignore_errors=True)
 
@@ -430,7 +313,6 @@ if __name__ == "__main__":
 
         human_like_sleep(2000, 3000)
 
-        # Generate credentials
         email_addr = f"user_{uuid.uuid4().hex[:8]}@emalupe.com"
         pwd = generate_strong_password(16)
         print(f"      Generated Email: {email_addr}")
@@ -448,7 +330,6 @@ if __name__ == "__main__":
         password_field.clear()
         password_field.send_keys(pwd)
 
-        # Submit form to trigger CAPTCHA
         print("[6/6] Submitting registration form...")
         submit_btn = WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "span.mat-mdc-button-touch-target, button[type='submit']"))
@@ -456,10 +337,10 @@ if __name__ == "__main__":
         human_click(driver, submit_btn)
         human_like_sleep(2000, 3000)
 
-        # Solve CAPTCHA challenge
-        solve_recaptcha_v2(driver, max_attempts=1)
+        # Solve CAPTCHA with up to 3 retry rounds
+        solve_recaptcha_v2(driver, max_attempts=3)
 
-        # Trigger final submission step
+        # Final submission click after CAPTCHA resolution
         try:
             remaining_btns = driver.find_elements(By.CSS_SELECTOR, "button[type='submit'], button.mat-mdc-raised-button")
             for btn in remaining_btns:
