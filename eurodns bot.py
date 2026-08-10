@@ -307,4 +307,4 @@ def solve_recaptcha_v2(driver, max_attempts=1):
             pass
 
         try:
-            bframe = WebDriverWait(driver, 4).
+            bframe = WebDriverWait(driver, 4)
