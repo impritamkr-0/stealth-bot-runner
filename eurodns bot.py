@@ -252,14 +252,13 @@ def solve_recaptcha_v2(driver, max_attempts=6):
         except Exception as e:
             print(f"      Verify click failed/skipped: {e}")
 
-try:
+        try:
             driver.switch_to.default_content()
         except Exception:
             pass
 
         human_like_sleep(1500, 2500)
 
-    # Indented exactly 4 spaces (aligned with 'for attempt...')
     return is_recaptcha_solved(driver)
 
 # ==================== MAIN EXECUTION ====================
@@ -273,7 +272,7 @@ if __name__ == "__main__":
     print("[1/6] Launching Chrome...")
     driver = None
     
-# Force alignment with installed Chrome version
+    # Force alignment with installed Chrome version
     target_version = installed_chrome_version if installed_chrome_version else 150
 
     try:
@@ -284,6 +283,7 @@ if __name__ == "__main__":
         shutil.rmtree(uc_cache, ignore_errors=True)
         opts, profile = build_chrome_options(temp_profile_dir)
         driver = uc.Chrome(options=opts, version_main=150)
+
     stealth(
         driver,
         languages=["en-US", "en"],
@@ -323,7 +323,7 @@ if __name__ == "__main__":
         pwd = generate_strong_password(16)
         print(f"      Generated Email: {email_addr}")
 
-print("[5/6] Filling form fields...")
+        print("[5/6] Filling form fields...")
         email_field = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.XPATH, "//input[@type='email' or @name='email' or contains(@id, 'email')]"))
         )
